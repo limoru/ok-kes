@@ -127,17 +127,20 @@ def _export_config_to_text(task):
     return encoded
 
 
-def _import_config_from_text(task, encoded_text):
-    """从 base64 编码文本导入配置到任务配置文件。"""
+def _decode_and_sanitize_config(task, encoded_text):
+    """解码 base64 配置文本并按 default_config 校验字段。
+
+    返回 (sanitized_data, ignored_keys)；解码失败或格式无效时返回 (None, None)。
+    """
     try:
         json_str = base64.b64decode(encoded_text.encode('ascii')).decode('utf-8')
         data = json.loads(json_str)
     except Exception as e:
         task.log_info(f"解码失败，无效的配置编码: {e}")
-        return False
+        return None, None
     if not isinstance(data, dict):
         task.log_info("无效的配置数据格式")
-        return False
+        return None, None
     _migrate_flash_priority(data)
 
     # 旧版分享配置可能包含当前版本已经删除的字段。ConfigCard 会根据
@@ -156,9 +159,12 @@ def _import_config_from_text(task, encoded_text):
         sanitized_data[key] = value
     if ignored_keys:
         task.log_info(f"导入配置时忽略无效或已废弃字段: {', '.join(ignored_keys)}")
-    data = sanitized_data
+    return sanitized_data, ignored_keys
 
-    # 写入配置文件
+
+def _write_sanitized_config(task, data):
+    """将已校验的配置字典写入配置文件，并刷新 task.config 缓存。"""
+    allowed_config = getattr(task, "default_config", {})
     config_file = task.config.config_file
     try:
         # 合并：保留 _ 开头的内部状态，覆盖用户配置
@@ -190,6 +196,15 @@ def _import_config_from_text(task, encoded_text):
         return False
 
 
+def _import_config_from_text(task, encoded_text):
+    """从 base64 编码文本直接解码并写入配置（不弹出预览），
+    供热门配置应用、本地方案加载等无需预览确认的场景复用。"""
+    sanitized_data, _ = _decode_and_sanitize_config(task, encoded_text)
+    if sanitized_data is None:
+        return False
+    return _write_sanitized_config(task, sanitized_data)
+
+
 def make_export_callback(task):
     """生成导出配置按钮的回调函数。"""
     def export():
@@ -209,8 +224,155 @@ def make_export_callback(task):
     return export
 
 
-def make_import_callback(task):
-    """生成导入配置按钮的回调函数。"""
+def _format_config_value(value):
+    """将配置值格式化为便于阅读的字符串。"""
+    if isinstance(value, bool):
+        return "开启" if value else "关闭"
+    if isinstance(value, (list, tuple)):
+        if not value:
+            return "(空)"
+        return "、".join(str(item) for item in value)
+    if value is None or value == "":
+        return "(空)"
+    return str(value)
+
+
+def _save_current_config_as_profile(task, mode, parent=None):
+    """弹出命名对话框，将当前配置保存为本地方案；成功返回方案名称，取消/失败返回 None。"""
+    from PySide6.QtWidgets import QInputDialog, QMessageBox
+
+    default_name = _default_local_profile_name(task, mode)
+    proposed_name = default_name
+    while True:
+        entered_name, accepted = QInputDialog.getText(
+            parent,
+            "保存当前配置",
+            "请输入本地配置名称：",
+            text=proposed_name,
+        )
+        if not accepted:
+            return None
+        profile_name = entered_name.strip() or default_name
+
+        all_profiles = _read_local_profiles(task)
+        mode_profiles = all_profiles.get(mode)
+        if not isinstance(mode_profiles, dict):
+            mode_profiles = {}
+
+        if profile_name in mode_profiles:
+            reply = QMessageBox.question(
+                parent,
+                "配置名称重复",
+                f"本地配置“{profile_name}”已存在。\n\n"
+                "选择“是”覆盖原配置，选择“否”重新命名。",
+                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+                QMessageBox.No,
+            )
+            if reply == QMessageBox.Cancel:
+                return None
+            if reply == QMessageBox.No:
+                proposed_name = profile_name
+                continue
+
+        mode_profiles[profile_name] = _current_config_snapshot(task)
+        all_profiles[mode] = mode_profiles
+        if _write_local_profiles(task, all_profiles):
+            task.log_info(f"本地配置保存成功: {profile_name}")
+            return profile_name
+        QMessageBox.warning(parent, "保存失败", "本地配置文件写入失败。")
+        return None
+
+
+def _show_import_preview_dialog(task, mode, sanitized_data, ignored_keys):
+    """展示导入配置的差异预览，并提供备份当前配置的入口。
+
+    返回 True 表示用户确认导入，False 表示取消。
+    """
+    from PySide6.QtWidgets import (
+        QDialog,
+        QHBoxLayout,
+        QLabel,
+        QMessageBox,
+        QPushButton,
+        QScrollArea,
+        QVBoxLayout,
+        QWidget,
+    )
+
+    allowed_config = getattr(task, "default_config", {})
+    changed_items = []
+    unchanged_count = 0
+    for key, new_value in sanitized_data.items():
+        current_value = task.config.get(key, allowed_config.get(key))
+        if current_value == new_value:
+            unchanged_count += 1
+            continue
+        changed_items.append((key, current_value, new_value))
+
+    dialog = QDialog()
+    dialog.setWindowTitle("导入配置预览")
+    dialog.resize(560, 480)
+    layout = QVBoxLayout(dialog)
+
+    if not changed_items:
+        layout.addWidget(QLabel("导入的配置与当前配置完全一致，无需覆盖任何配置项。"))
+    else:
+        layout.addWidget(QLabel(
+            f"以下 {len(changed_items)} 项配置将被覆盖"
+            f"（另有 {unchanged_count} 项与当前一致，未列出）："
+            "\n导入后原有内容会丢失，建议先备份当前配置。"
+        ))
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        for key, current_value, new_value in changed_items:
+            item_label = QLabel(
+                f"【{key}】\n"
+                f"  当前值：{_format_config_value(current_value)}\n"
+                f"  导入后：{_format_config_value(new_value)}"
+            )
+            item_label.setWordWrap(True)
+            content_layout.addWidget(item_label)
+        content_layout.addStretch()
+        scroll_area.setWidget(content)
+        layout.addWidget(scroll_area)
+
+    if ignored_keys:
+        ignored_label = QLabel(
+            f"以下字段无效或已废弃，导入时将被忽略：{'、'.join(ignored_keys)}"
+        )
+        ignored_label.setWordWrap(True)
+        layout.addWidget(ignored_label)
+
+    button_layout = QHBoxLayout()
+    backup_button = QPushButton("备份当前配置")
+    cancel_button = QPushButton("取消")
+    confirm_button = QPushButton("确认导入并覆盖")
+    button_layout.addWidget(backup_button)
+    button_layout.addStretch()
+    button_layout.addWidget(cancel_button)
+    button_layout.addWidget(confirm_button)
+    layout.addLayout(button_layout)
+
+    def on_backup():
+        profile_name = _save_current_config_as_profile(task, mode, parent=dialog)
+        if profile_name:
+            QMessageBox.information(
+                dialog, "备份成功",
+                f"当前配置已备份为本地方案“{profile_name}”，可在“切换配置”中找回。",
+            )
+
+    backup_button.clicked.connect(on_backup)
+    cancel_button.clicked.connect(dialog.reject)
+    confirm_button.clicked.connect(dialog.accept)
+    confirm_button.setEnabled(bool(changed_items))
+
+    return dialog.exec_() == QDialog.Accepted
+
+
+def make_import_callback(task, mode):
+    """生成导入配置按钮的回调函数：解码后先弹出预览，确认后才覆盖写入。"""
     def import_config():
         from PySide6.QtWidgets import QInputDialog, QMessageBox, QApplication
         # 尝试从剪贴板预填文本
@@ -222,13 +384,22 @@ def make_import_callback(task):
         if not ok or not text.strip():
             return
         text = text.strip()
-        success = _import_config_from_text(task, text)
-        if success:
+
+        sanitized_data, ignored_keys = _decode_and_sanitize_config(task, text)
+        if sanitized_data is None:
+            QMessageBox.warning(None, "导入失败", "编码无效，请检查后重试。")
+            return
+
+        if not _show_import_preview_dialog(task, mode, sanitized_data, ignored_keys or []):
+            task.log_info("用户取消了配置导入")
+            return
+
+        if _write_sanitized_config(task, sanitized_data):
             QMessageBox.information(None, "导入成功", "配置已成功导入并应用！")
             task.log_info("配置导入成功")
             refresh_task_config_widgets(task)
         else:
-            QMessageBox.warning(None, "导入失败", "编码无效或写入失败，请检查后重试。")
+            QMessageBox.warning(None, "导入失败", "写入配置文件失败，请检查后重试。")
     return import_config
 
 
@@ -314,53 +485,15 @@ def _apply_local_profile(task, profile):
 def make_save_local_config_callback(task, mode):
     """生成保存本地配置方案按钮的回调函数。"""
     def save_local_config():
-        from PySide6.QtWidgets import QInputDialog, QMessageBox
+        from PySide6.QtWidgets import QMessageBox
 
-        default_name = _default_local_profile_name(task, mode)
-        proposed_name = default_name
-        while True:
-            entered_name, accepted = QInputDialog.getText(
+        profile_name = _save_current_config_as_profile(task, mode)
+        if profile_name:
+            QMessageBox.information(
                 None,
-                "保存配置",
-                "请输入本地配置名称：",
-                text=proposed_name,
+                "保存成功",
+                f"当前配置已保存为“{profile_name}”。",
             )
-            if not accepted:
-                return
-            profile_name = entered_name.strip() or default_name
-
-            all_profiles = _read_local_profiles(task)
-            mode_profiles = all_profiles.get(mode)
-            if not isinstance(mode_profiles, dict):
-                mode_profiles = {}
-
-            if profile_name in mode_profiles:
-                reply = QMessageBox.question(
-                    None,
-                    "配置名称重复",
-                    f"本地配置“{profile_name}”已存在。\n\n"
-                    "选择“是”覆盖原配置，选择“否”重新命名。",
-                    QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
-                    QMessageBox.No,
-                )
-                if reply == QMessageBox.Cancel:
-                    return
-                if reply == QMessageBox.No:
-                    proposed_name = profile_name
-                    continue
-
-            mode_profiles[profile_name] = _current_config_snapshot(task)
-            all_profiles[mode] = mode_profiles
-            if _write_local_profiles(task, all_profiles):
-                QMessageBox.information(
-                    None,
-                    "保存成功",
-                    f"当前配置已保存为“{profile_name}”。",
-                )
-                task.log_info(f"本地配置保存成功: {profile_name}")
-            else:
-                QMessageBox.warning(None, "保存失败", "本地配置文件写入失败。")
-            return
 
     return save_local_config
 

@@ -71,7 +71,7 @@ class SortieMode(TriggerTask):
             '配置操作': {
                 'type': 'button',
                 'buttons': [
-                    {'text': '导入配置码', 'callback': make_import_callback(self)},
+                    {'text': '导入配置码', 'callback': make_import_callback(self, 'sortie')},
                     {'text': '导出配置码', 'callback': make_export_callback(self)},
                     {'text': '热门配置', 'callback': self._show_hot_configs},
                     {'text': '保存配置', 'callback': make_save_local_config_callback(self, 'sortie')},

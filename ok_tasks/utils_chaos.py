@@ -196,6 +196,39 @@ def _save_runtime_feature(task: TriggerTask, feature_name: str, region, target_r
     return True
 
 
+_TARGET_MEMBER_FEATURE_NAMES = (
+    "target_member",
+    "target_member_small",
+    "target_member_in_select_card",
+    "target_member_tiny",
+    "target_member_in_mask_card",
+    "target_member_large",
+)
+
+
+def _clear_target_member_features(task: TriggerTask):
+    """清除已保存的刷存档主战员运行时特征（内存缓存与磁盘图片）。"""
+    import os
+    from ok.util.config import Config
+    from ok.util.file import get_relative_path
+
+    feature_set = task.executor.feature_set
+    with feature_set.lock:
+        for feature_name in _TARGET_MEMBER_FEATURE_NAMES:
+            feature_set.feature_dict.pop(feature_name, None)
+            feature_set.box_dict.pop(feature_name, None)
+
+    config_folder = get_relative_path(Config.config_folder)
+    for feature_name in _TARGET_MEMBER_FEATURE_NAMES:
+        feature_path = os.path.join(config_folder, f"{feature_name}.png")
+        if os.path.exists(feature_path):
+            try:
+                os.remove(feature_path)
+            except OSError as error:
+                task.log_error(f"删除特征图片失败：{feature_path}，错误={error}")
+    task.log_info("已清除刷存档主战员的运行时特征缓存")
+
+
 def handle_archive_target_member(task: TriggerTask):
     """信息统计页面：按配置记录刷存档时使用的目标主战员特征。"""
     search_box = task.box_of_screen(0.005, 0.018, 0.080, 0.343)
@@ -289,10 +322,15 @@ def handle_archive_target_member(task: TriggerTask):
             task.sleep(1)
             return True
 
-    task.log_info(f"三个主战员均未命中刷存档主战员「{target_name}」")
+    task.log_info(
+        f"三个主战员均未命中刷存档主战员「{target_name}」，"
+        "清空缓存特征并停止任务"
+    )
+    _clear_target_member_features(task)
     _move_and_click(task, 0.960, 0.054)
-    task.node_status["save_target_member"] = True
+    task.node_status["save_target_member"] = False
     task.sleep(1)
+    task.disable()
     return True
 
 

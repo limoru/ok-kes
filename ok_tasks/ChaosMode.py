@@ -33,6 +33,9 @@ class ChaosMode(TriggerTask):
         self.default_config['存储数据价值大于等于多少层级'] = 12
         self.default_config['保留大于多少TB的存档'] = 62000
         self.default_config['领取奖励(只使用验证卡)'] = False
+        # 必选任务优先级：命中即直接选择，无视拉黑任务过滤，
+        # 用于即使带有负面效果也一定要获取的情况
+        self.default_config['必选任务优先级'] = ["复制"]
         # 事件任务优先级列表, 匹配到包含对应文字的选项时会优先选择
         self.default_config['任务优先级'] = ["复制","信用点增加", "移除"]
         self.default_config['拉黑任务'] = ["咒术卡牌", "压力"]
@@ -55,6 +58,11 @@ class ChaosMode(TriggerTask):
         self.default_config['装备1号位优先级'] = ["蚀化臂铠"]
         self.default_config['装备2号位优先级'] = ["拷问工具箱"]
         self.default_config['装备3号位优先级'] = ["异象石碑"]
+        # 装备刻印功能：开启后装备分配逻辑改为"是否推进目标名+目标刻印进展"，
+        # 不再使用装备优先级+品质的原有比较逻辑。
+        self.default_config['刷装备刻印'] = False
+        self.default_config['装备刻印优先级'] = []
+        self.default_config['刷装备刻印信用点下限'] = 0
         self.default_config['卡牌奖励优先级'] = ["梦之边境"]
         self.default_config['首层刷特定闪光'] = False
         self.default_config['刷空档'] = False
@@ -92,7 +100,7 @@ class ChaosMode(TriggerTask):
             '配置操作': {
                 'type': 'button',
                 'buttons': [
-                    {'text': '导入配置码', 'callback': make_import_callback(self)},
+                    {'text': '导入配置码', 'callback': make_import_callback(self, 'chaos')},
                     {'text': '导出配置码', 'callback': make_export_callback(self)},
                     {'text': '热门配置', 'callback': self._show_hot_configs},
                     {'text': '保存配置', 'callback': make_save_local_config_callback(self, 'chaos')},
@@ -103,11 +111,31 @@ class ChaosMode(TriggerTask):
             '存储数据价值大于等于多少层级': {'min': 0, 'max': 15},
         }
         self.config_description['游戏语言'] = "国际服请设置为繁体中文"
+        self.config_description['必选任务优先级'] = (
+            "命中即直接选择该任务选项，无视拉黑任务过滤；"
+            "用于该选项即使带有拉黑关键词（如负面效果），"
+            "也一定要获取的场景。填写规则与“任务优先级”相同。"
+        )
         self.config_description['闪光优先级'] = (
             "卡牌名称和描述无需完整填写，输入几个关键字即可，但顺序须与游戏原文一致。"
         )
         self.config_description['刷初始卡牌'] = (
             "填写目标卡牌名称后反复刷新初始卡牌；不能与“刷空档”同时使用。"
+        )
+        self.config_description['刷装备刻印'] = (
+            "开启后装备获取逻辑改为优先追求刻印词条：只有能让槏位在"
+            "“目标装备名+目标刻印”上产生进展的装备才会分配给刷存档主战员，"
+            "其余装备一律分配给其他主战员。开启后原有的装备优先级+品质比较"
+            "逻辑不再生效。"
+        )
+        self.config_description['装备刻印优先级'] = (
+            "填写希望获得的刻印词条关键词，不区分装备槏位，命中任意一项即算"
+            "满足；需要先开启“刷装备刻印”才会生效。"
+        )
+        self.config_description['刷装备刻印信用点下限'] = (
+            "商店购买装备追刻印时，当前信用点低于该数值则不购买（避免为了"
+            "刻印花费过多信用点）；设为0表示不限制。仅影响商店购买，"
+            "不影响免费获得的装备。"
         )
         self.config_description['刷空档'] = (
             "初始任务必须包含“移除2张”，否则重新开始；不能与“刷初始卡牌”同时使用。"

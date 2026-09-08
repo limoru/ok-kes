@@ -4,10 +4,13 @@ import re
 import random
 import time
 import sys
+import json
 import cv2
 import os
 import numpy as np
 from opencc import OpenCC
+
+from utils_equipment_engraving import should_assign_to_target_member
 
 _jp2t = OpenCC('jp2t')  # 日文新字体转繁体
 _t2s = OpenCC('t2s')  # 繁体转简体
@@ -136,6 +139,68 @@ def _get_game_text(task: TriggerTask, default_text):
 
     mapping = _load_game_text_map(game_lang)
     return mapping.get(default_text, default_text)
+
+
+
+# 装备词典文件路径：id <-> 装备名称/所属槏位 的固定映射表。
+# 详见文件内 "_readme" 字段的维护规则说明。
+_EQUIPMENT_DICTIONARY_FILE = os.path.join(
+    os.path.dirname(__file__), 'assets', 'equipment_dictionary.json'
+)
+# 进程内缓存，程序启动后首次用到时加载一次，之后复用，不重复读盘。
+_EQUIPMENT_DICTIONARY_CACHE = None
+
+
+def _load_equipment_dictionary():
+    """加载装备词典（带进程内缓存），返回统一结构：
+    {
+        "by_id": {int id: {"name": str, "slot": int|None}},
+        "by_name": {str name: {"id": int, "slot": int|None}},
+    }
+    文件缺失或格式错误时返回空结构，不影响主流程运行。
+    """
+    global _EQUIPMENT_DICTIONARY_CACHE
+    if _EQUIPMENT_DICTIONARY_CACHE is not None:
+        return _EQUIPMENT_DICTIONARY_CACHE
+
+    by_id = {}
+    by_name = {}
+    try:
+        with open(_EQUIPMENT_DICTIONARY_FILE, 'r', encoding='utf-8') as f:
+            raw = json.load(f)
+        for entry in raw.get('equipments', []):
+            entry_id = entry.get('id')
+            name = entry.get('name')
+            slot = entry.get('slot')
+            if not isinstance(entry_id, int) or not isinstance(name, str) or not name:
+                continue
+            slot = slot if isinstance(slot, int) else None
+            by_id[entry_id] = {"name": name, "slot": slot}
+            by_name[name] = {"id": entry_id, "slot": slot}
+    except Exception:
+        by_id = {}
+        by_name = {}
+
+    _EQUIPMENT_DICTIONARY_CACHE = {"by_id": by_id, "by_name": by_name}
+    return _EQUIPMENT_DICTIONARY_CACHE
+
+
+def get_equipment_id(name):
+    """按装备名称查询词典编号；未收录时返回 None。"""
+    entry = _load_equipment_dictionary()["by_name"].get(name)
+    return entry["id"] if entry else None
+
+
+def get_equipment_name(equipment_id):
+    """按词典编号查询装备名称；未收录时返回 None。"""
+    entry = _load_equipment_dictionary()["by_id"].get(equipment_id)
+    return entry["name"] if entry else None
+
+
+def get_equipment_slot_by_name(name):
+    """按装备名称查询所属槏位下标（0/1/2）；未收录或未标注槏位时返回 None。"""
+    entry = _load_equipment_dictionary()["by_name"].get(name)
+    return entry["slot"] if entry else None
 
 
 def _migrate_route_boss_to_elite(task: TriggerTask):
@@ -2355,16 +2420,42 @@ def _should_install_equipment(task, current_name, current_quality, new_equipment
     )
 
 
+def _equipment_slot_by_dictionary(ocr_name):
+    """按装备词典用双向包含匹配 OCR 名称，返回词典记录的槏位下标；
+    未收录该装备或未标注槏位时返回 None。"""
+    if not ocr_name:
+        return None
+    by_name = _load_equipment_dictionary()["by_name"]
+    for dict_name, entry in by_name.items():
+        if entry["slot"] is None:
+            continue
+        if ocr_name in dict_name or dict_name in ocr_name:
+            return entry["slot"]
+    return None
+
+
 def _equipment_info(task: TriggerTask, name_region, type_region, description_region):
-    """从指定区域读取装备名称、类型和描述，并解析槽位、品质与配置优先级。"""
+    """从指定区域读取装备名称、类型和描述，并解析槽位、品质与配置优先级。
+
+    槏位判定优先查装备词典（按名称直接确定，不受OCR类型文本漏识别影响），
+    词典未收录该装备时才回退到原有的“类型文本”识别逻辑。
+    """
     ocr_name = _get_region_text(task, name_region).strip()
     type_text = _get_region_text(task, type_region).strip()
     description = _get_region_text(task, description_region).strip()
-    if not ocr_name or not type_text:
+    if not ocr_name:
         return None
-    slot = _equipment_slot(task, type_text)
-    if slot is None:
-        return None
+
+    slot = _equipment_slot_by_dictionary(ocr_name)
+    if slot is not None:
+        task.log_info(f"待选装备「{ocr_name}」命中装备词典，槏位={slot + 1}号位")
+    else:
+        if not type_text:
+            return None
+        slot = _equipment_slot(task, type_text)
+        if slot is None:
+            return None
+
     priority = _equipment_priority(task, slot)
     canonical_name, rank = _match_equipment_name(ocr_name, priority)
     quality, quality_rgb = _equipment_quality_at(task, (0.117, 0.409))
@@ -2511,6 +2602,21 @@ def handle_equipment(task: TriggerTask):
                 task.sleep(1)
                 return True
 
+            if _get_config_value(task, "刷装备刻印", False):
+                credit_floor = _get_config_value(task, "刷装备刻印信用点下限", 0)
+                try:
+                    credit_floor = int(credit_floor)
+                except (TypeError, ValueError):
+                    credit_floor = 0
+                if credit_floor > 0 and current_credit < credit_floor:
+                    task.log_info(
+                        f"刷装备刻印: 当前信用点{current_credit}低于下限{credit_floor}，"
+                        "跳过本次购买评估，点击「取消」"
+                    )
+                    task.click_box(cancel_box)
+                    task.sleep(1)
+                    return True
+
         bottom_buttons = [
             box for box in task.all_texts
             if 0.563 <= (box.x + box.width / 2) / task.width <= 0.998
@@ -2579,25 +2685,40 @@ def handle_equipment(task: TriggerTask):
                     equipment["descriptions"][equipment_slot] = ""
             current_name, _ = _current_equipment_for_slot(task, equipment, slot)
             current_quality = equipment["qualities"][slot]
-            should_install_first, install_reason = _should_install_equipment(
-                task,
-                current_name,
-                current_quality,
-                new_equipment,
-            )
-            has_legendary_in_other_slot = any(
-                quality == "传说" and equipment_slot != slot
-                for equipment_slot, quality in enumerate(live_qualities)
-            )
-            if (
-                new_equipment["quality"] == "传说"
-                and has_legendary_in_other_slot
-            ):
-                should_install_first = False
-                install_reason = "该主战员其他装备位已有传说装备"
-                task.log_info(
-                    "目标主战员已安装传说装备，新传说装备改由其他主战员安装"
+
+            if _get_config_value(task, "刷装备刻印", False):
+                # 刷装备刻印模式：整体切换判断标准为"是否推进目标名+目标刻印进展"，
+                # 不再使用装备优先级+品质比较，也不做传说装备互斥判断。
+                engraving_keywords = _get_card_list(task, "装备刻印优先级")
+                current_description = equipment["descriptions"][slot]
+                should_install_first, install_reason = should_assign_to_target_member(
+                    current_name,
+                    current_description,
+                    new_equipment["name"],
+                    equipment_desc,
+                    new_equipment["priority"],
+                    engraving_keywords,
                 )
+            else:
+                should_install_first, install_reason = _should_install_equipment(
+                    task,
+                    current_name,
+                    current_quality,
+                    new_equipment,
+                )
+                has_legendary_in_other_slot = any(
+                    quality == "传说" and equipment_slot != slot
+                    for equipment_slot, quality in enumerate(live_qualities)
+                )
+                if (
+                    new_equipment["quality"] == "传说"
+                    and has_legendary_in_other_slot
+                ):
+                    should_install_first = False
+                    install_reason = "该主战员其他装备位已有传说装备"
+                    task.log_info(
+                        "目标主战员已安装传说装备，新传说装备改由其他主战员安装"
+                    )
 
         if should_install_first and preferred_member_index is not None:
             chosen = lv_texts[preferred_member_index]
@@ -3268,44 +3389,64 @@ def handle_event_task(task: TriggerTask):
         task.sleep(2)
         return True
 
-    # 读取拉黑任务列表
-    blacklist = _get_config_value(task, '拉黑任务', ["咒术卡牌"])
-    blacklist = list(blacklist) if isinstance(blacklist, (list, tuple)) else []
-    if blacklist:
-        # 过滤掉描述包含拉黑关键词的任务
-        filtered_tasks = [
-            t for t in tasks_info
-            if not any(is_subsequence(bk, t['description']) for bk in blacklist)
-        ]
-        if len(filtered_tasks) < len(tasks_info):
-            task.log_info(f"拉黑任务关键词: {blacklist}，过滤前{len(tasks_info)}个，过滤后{len(filtered_tasks)}个")
-            for t in tasks_info:
-                if t not in filtered_tasks:
-                    task.log_info(f"  已拉黑: 描述: {t['description']}")
-        # 如果全部被拉黑，兜底用原列表
-        if not filtered_tasks:
-            task.log_info("所有任务均被拉黑，兜底使用原列表")
-            filtered_tasks = tasks_info
-        tasks_info = filtered_tasks
-
-    equipment_priority = []
-    for slot in range(1, 4):
-        equipment_priority.extend(
-            _get_card_list(task, f"装备{slot}号位优先级")
-        )
-    priority = [
-        *equipment_priority,
-        *_get_card_list(task, "任务优先级"),
-    ]
+    # 第一级：必选任务优先级。命中即直接选中，完全忽略拉黑过滤，
+    # 用于“即使带有咒术/压力等负面效果，只要出现复制/指定装备等
+    # 想要的效果，也必须获取”的场景。
+    must_pick_priority = _get_card_list(task, "必选任务优先级")
     chosen = None
-    for keyword in priority:
+    for keyword in must_pick_priority:
+        if not isinstance(keyword, str) or not keyword.strip():
+            continue
         for t in tasks_info:
             if is_subsequence(keyword, t['description']):
                 chosen = t
-                task.log_info(f"优先选择「{keyword}」-> 描述: {t['description']}")
+                task.log_info(
+                    f"命中必选任务优先级「{keyword}」-> 描述: {t['description']}"
+                    "（忽略拉黑过滤）"
+                )
                 break
         if chosen is not None:
             break
+
+    if chosen is None:
+        # 第二级：拉黑任务过滤
+        blacklist = _get_config_value(task, '拉黑任务', ["咒术卡牌"])
+        blacklist = list(blacklist) if isinstance(blacklist, (list, tuple)) else []
+        if blacklist:
+            # 过滤掉描述包含拉黑关键词的任务
+            filtered_tasks = [
+                t for t in tasks_info
+                if not any(is_subsequence(bk, t['description']) for bk in blacklist)
+            ]
+            if len(filtered_tasks) < len(tasks_info):
+                task.log_info(f"拉黑任务关键词: {blacklist}，过滤前{len(tasks_info)}个，过滤后{len(filtered_tasks)}个")
+                for t in tasks_info:
+                    if t not in filtered_tasks:
+                        task.log_info(f"  已拉黑: 描述: {t['description']}")
+            # 如果全部被拉黑，兜底用原列表
+            if not filtered_tasks:
+                task.log_info("所有任务均被拉黑，兜底使用原列表")
+                filtered_tasks = tasks_info
+            tasks_info = filtered_tasks
+
+        # 第三级：任务优先级（含装备优先级），在拉黑过滤后的选项中匹配
+        equipment_priority = []
+        for slot in range(1, 4):
+            equipment_priority.extend(
+                _get_card_list(task, f"装备{slot}号位优先级")
+            )
+        priority = [
+            *equipment_priority,
+            *_get_card_list(task, "任务优先级"),
+        ]
+        for keyword in priority:
+            for t in tasks_info:
+                if is_subsequence(keyword, t['description']):
+                    chosen = t
+                    task.log_info(f"优先选择「{keyword}」-> 描述: {t['description']}")
+                    break
+            if chosen is not None:
+                break
 
     if chosen is None and task.name == "自动卡厄思模式":
         attack_event_features = task.find_feature(
