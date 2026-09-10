@@ -141,7 +141,6 @@ def _get_game_text(task: TriggerTask, default_text):
     return mapping.get(default_text, default_text)
 
 
-
 # 装备词典文件路径：id <-> 装备名称/所属槏位 的固定映射表。
 # 详见文件内 "_readme" 字段的维护规则说明。
 _EQUIPMENT_DICTIONARY_FILE = os.path.join(
@@ -2223,14 +2222,38 @@ def _equipment_priority(task: TriggerTask, slot):
     return list(priority) if isinstance(priority, (list, tuple)) else []
 
 
+
+# 装备名比较前的标点符号归一化：去除中英文引号、书名号、连字符、空格等
+# OCR 容易识别错漏的符号，只保留中文/英文/数字，避免因为一个标点符号
+# 不一致就导致整条装备名匹配失败（例如"W-52「多巴胺注射器」"）。
+_EQUIPMENT_NAME_PUNCTUATION_PATTERN = re.compile(
+    r'[「」『』"\'\-\s\u3000·,，。.!！?？:：;；()（）\[\]【】]'
+)
+
+
+def _normalize_equipment_name(name):
+    """去除装备名中容易被 OCR 误识别的标点符号，用于容错比较。"""
+    return _EQUIPMENT_NAME_PUNCTUATION_PATTERN.sub('', name or '')
+
+
 def _match_equipment_name(ocr_name, priority):
-    """用双向包含匹配装备名，返回配置中的标准名称及优先级下标。"""
+    """用双向包含匹配装备名（比较前做标点符号归一化），
+    返回配置中的标准名称及优先级下标。"""
     if not ocr_name:
+        return None, None
+    normalized_ocr_name = _normalize_equipment_name(ocr_name)
+    if not normalized_ocr_name:
         return None, None
     for index, config_name in enumerate(priority):
         if not config_name:
             continue
-        if ocr_name in config_name or config_name in ocr_name:
+        normalized_config_name = _normalize_equipment_name(config_name)
+        if not normalized_config_name:
+            continue
+        if (
+            normalized_ocr_name in normalized_config_name
+            or normalized_config_name in normalized_ocr_name
+        ):
             return config_name, index
     return None, None
 
@@ -2421,15 +2444,24 @@ def _should_install_equipment(task, current_name, current_quality, new_equipment
 
 
 def _equipment_slot_by_dictionary(ocr_name):
-    """按装备词典用双向包含匹配 OCR 名称，返回词典记录的槏位下标；
-    未收录该装备或未标注槏位时返回 None。"""
+    """按装备词典用双向包含匹配 OCR 名称（比较前做标点符号归一化），
+    返回词典记录的槏位下标；未收录该装备或未标注槏位时返回 None。"""
     if not ocr_name:
+        return None
+    normalized_ocr_name = _normalize_equipment_name(ocr_name)
+    if not normalized_ocr_name:
         return None
     by_name = _load_equipment_dictionary()["by_name"]
     for dict_name, entry in by_name.items():
         if entry["slot"] is None:
             continue
-        if ocr_name in dict_name or dict_name in ocr_name:
+        normalized_dict_name = _normalize_equipment_name(dict_name)
+        if not normalized_dict_name:
+            continue
+        if (
+            normalized_ocr_name in normalized_dict_name
+            or normalized_dict_name in normalized_ocr_name
+        ):
             return entry["slot"]
     return None
 
@@ -2747,6 +2779,21 @@ def handle_equipment(task: TriggerTask):
                 task.sleep(1)
                 return True
             return False
+
+        engraving_mode = _get_config_value(task, "刷装备刻印", False)
+        if is_purchase_page and engraving_mode:
+            task.log_info(
+                f"刷装备刻印: {slot + 1}号位装备「{new_equipment['name']}」"
+                f"不满足刻印进展，原因={install_reason}，放弃购买，点击「取消」"
+            )
+            # 记录本次货架周期内已判定不满足刻印的装备名，避免下次进商店
+            # 时重新点开同一件装备，导致扫描卡在货架前排、后面商品永远
+            # 没机会被检查。用 handle_shop 里读取到的原始 OCR 名称
+            # （new_equipment["ocr_name"]）匹配，与货架上的文本口径一致。
+            _mark_shop_engraving_rejected(task, new_equipment["ocr_name"])
+            task.click_box(cancel_box)
+            task.sleep(1)
+            return True
 
         other_members = [
             level_box for index, level_box in enumerate(lv_texts)
@@ -3869,6 +3916,46 @@ def handle_rest(task: TriggerTask):
     return False
 
 
+def _shop_engraving_rejected_names(task: TriggerTask):
+    """获取本次货架周期内已判定"不满足刻印进展"的装备名集合（已做标点符号
+    归一化，避免货架列表页和购买详情页两次OCR识别的标点差异导致漏判）。
+
+    货架刷新（免费或花费信用点）之后要调用 `_clear_shop_engraving_rejected`
+    清空这个记录，否则同名的新装备也会被误跳过。
+    """
+    node_status = getattr(task, "node_status", None)
+    if node_status is None:
+        return set()
+    rejected = node_status.get("shop_engraving_rejected_names")
+    if not isinstance(rejected, set):
+        rejected = set()
+        node_status["shop_engraving_rejected_names"] = rejected
+    return rejected
+
+
+def _is_shop_engraving_rejected(task: TriggerTask, item_name):
+    """判断某个装备名（归一化后）是否已在本次货架周期内被判定不满足刻印。"""
+    normalized_name = _normalize_equipment_name(item_name)
+    if not normalized_name:
+        return False
+    return normalized_name in _shop_engraving_rejected_names(task)
+
+
+def _mark_shop_engraving_rejected(task: TriggerTask, item_name):
+    """记录某件装备（归一化后）本次货架周期内已被判定为不满足刻印进展，
+    避免重复点开。"""
+    normalized_name = _normalize_equipment_name(item_name)
+    if normalized_name:
+        _shop_engraving_rejected_names(task).add(normalized_name)
+
+
+def _clear_shop_engraving_rejected(task: TriggerTask):
+    """货架刷新后清空刻印黑名单，让新一轮商品重新参与评估。"""
+    node_status = getattr(task, "node_status", None)
+    if node_status is not None:
+        node_status["shop_engraving_rejected_names"] = set()
+
+
 def handle_shop(task: TriggerTask):
     """德朗商店: 优先移除卡牌，其次按配置购买卡牌或装备，最后尝试免费刷新。"""
     box = find_box_at_point(task, 0.729, 0.261)
@@ -3905,6 +3992,16 @@ def handle_shop(task: TriggerTask):
 
         current_credit = _get_current_credit(task)
         task.log_info(f"德朗商店挑选商品: 当前信用点={current_credit}")
+        # 购买页用「刷装备刻印信用点下限」作为闸门：信用点低于该值时一律点「取消」。
+        # 这里提前用同一个阈值过滤，避免点开注定被取消的装备，否则会陷入
+        # 「点开装备 -> 取消 -> 再点开同一件」的死循环。
+        engraving_credit_floor = 0
+        if _get_config_value(task, "刷装备刻印", False):
+            engraving_credit_floor = _get_config_value(task, "刷装备刻印信用点下限", 0)
+            try:
+                engraving_credit_floor = int(engraving_credit_floor)
+            except (TypeError, ValueError):
+                engraving_credit_floor = 0
         credit_icons = sorted(
         task.find_feature(
             feature_name="credit_icon",
@@ -3962,6 +4059,22 @@ def handle_shop(task: TriggerTask):
             if not item_name or price is None or price >= current_credit:
                 continue
 
+            engraving_mode = (
+                not is_card and _get_config_value(task, "刷装备刻印", False)
+            )
+            if engraving_mode and current_credit < engraving_credit_floor:
+                task.log_info(
+                    f"德朗商店: 装备「{item_name}」价格{price}虽低于当前信用点"
+                    f"{current_credit}，但未达到刷装备刻印下限"
+                    f"{engraving_credit_floor}，购买必被取消，跳过该装备"
+                )
+                continue
+            if engraving_mode and _is_shop_engraving_rejected(task, item_name):
+                task.log_info(
+                    f"德朗商店: 装备「{item_name}」本次货架周期内已判定不满足"
+                    "刻印进展，跳过，继续检查下一个商品"
+                )
+                continue
             if is_card:
                 if _neutral_card_limit_reached(task):
                     neutral_card_count = task.node_status.get(
@@ -3978,6 +4091,11 @@ def handle_shop(task: TriggerTask):
                  if name and (name in item_name or item_name in name)),
                 None,
                 )
+            elif engraving_mode:
+                # 刷装备刻印模式：货架上只能看到名字，看不到刻印描述，
+                # 不能靠名字过滤决定要不要点开；只要买得起就先点进详情页，
+                # 交给 handle_equipment 的购买页逻辑按刻印判定决定购买或取消。
+                matched_name = item_name
             else:
                 matched_name = next(
                 (canonical_name
@@ -3989,26 +4107,78 @@ def handle_shop(task: TriggerTask):
             if not matched_name:
                 continue
 
-            task.log_info(
-            f"德朗商店: {item_type}「{item_name}」命中配置「{matched_name}」，"
-            f"价格{price}小于当前信用点{current_credit}，点击信用点图标"
-            )
+            if engraving_mode:
+                task.log_info(
+                f"德朗商店: {item_type}「{item_name}」（刷装备刻印模式，"
+                f"不按名字过滤），价格{price}小于当前信用点{current_credit}，"
+                "点击信用点图标查看详情"
+                )
+            else:
+                task.log_info(
+                f"德朗商店: {item_type}「{item_name}」命中配置「{matched_name}」，"
+                f"价格{price}小于当前信用点{current_credit}，点击信用点图标"
+                )
             task.click_box(credit_icon)
             task.sleep(1)
             return True
 
+        refresh_region_boxes = [
+            text_box for text_box in task.all_texts
+            if 0.012 <= (text_box.x + text_box.width / 2) / task.width <= 0.258
+            and 0.892 <= (text_box.y + text_box.height / 2) / task.height <= 0.979
+            and text_box.name.strip()
+        ]
         free_box = next(
-        (text_box for text_box in task.all_texts
-         if 0.012 <= (text_box.x + text_box.width / 2) / task.width <= 0.258
-         and 0.892 <= (text_box.y + text_box.height / 2) / task.height <= 0.979
-         and "免费" in text_box.name),
-        None,
+            (text_box for text_box in refresh_region_boxes if "免费" in text_box.name),
+            None,
         )
         if free_box:
             task.log_info("德朗商店没有符合要求的商品，点击「免费」刷新")
             task.click_box(free_box)
             task.sleep(1)
+            _clear_shop_engraving_rejected(task)
             return True
+
+        # 免费刷新次数用完后，该区域会改为显示花费信用点刷新的按钮。
+        # 只有在"刷装备刻印"开启，且当前信用点超过"刷装备刻印信用点下限"
+        # 配置时，才允许花信用点刷新商店，与购买时使用的是同一个阈值配置。
+        if _get_config_value(task, "刷装备刻印", False):
+            paid_refresh_box = next(
+                (
+                    text_box for text_box in refresh_region_boxes
+                    if re.search(r"\d+", text_box.name)
+                ),
+                None,
+            )
+            if paid_refresh_box:
+                refresh_cost = _parse_discounted_price(
+                    re.search(r"\d+", paid_refresh_box.name).group()
+                )
+                current_credit = _get_current_credit(task)
+                credit_floor = _get_config_value(task, "刷装备刻印信用点下限", 300)
+                try:
+                    credit_floor = int(credit_floor)
+                except (TypeError, ValueError):
+                    credit_floor = 300
+                if (
+                    current_credit > credit_floor
+                    and refresh_cost is not None
+                    and current_credit >= refresh_cost
+                ):
+                    task.log_info(
+                        f"德朗商店没有符合要求的装备，刷装备刻印模式下"
+                        f"当前信用点{current_credit}高于下限{credit_floor}，"
+                        f"花费{refresh_cost}信用点刷新商店"
+                    )
+                    task.click_box(paid_refresh_box)
+                    task.sleep(1)
+                    _clear_shop_engraving_rejected(task)
+                    return True
+                task.log_info(
+                    f"德朗商店没有符合要求的装备，但当前信用点{current_credit}"
+                    f"不满足花费刷新条件（需求下限{credit_floor}，刷新费用"
+                    f"{refresh_cost}），不刷新"
+                )
     return False
 
 

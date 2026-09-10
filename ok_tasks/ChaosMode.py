@@ -62,7 +62,7 @@ class ChaosMode(TriggerTask):
         # 不再使用装备优先级+品质的原有比较逻辑。
         self.default_config['刷装备刻印'] = False
         self.default_config['装备刻印优先级'] = []
-        self.default_config['刷装备刻印信用点下限'] = 0
+        self.default_config['刷装备刻印信用点下限'] = 300
         self.default_config['卡牌奖励优先级'] = ["梦之边境"]
         self.default_config['首层刷特定闪光'] = False
         self.default_config['刷空档'] = False
@@ -123,19 +123,14 @@ class ChaosMode(TriggerTask):
             "填写目标卡牌名称后反复刷新初始卡牌；不能与“刷空档”同时使用。"
         )
         self.config_description['刷装备刻印'] = (
-            "开启后装备获取逻辑改为优先追求刻印词条：只有能让槏位在"
-            "“目标装备名+目标刻印”上产生进展的装备才会分配给刷存档主战员，"
-            "其余装备一律分配给其他主战员。开启后原有的装备优先级+品质比较"
+            "开启后原有的装备优先级+品质比较"
             "逻辑不再生效。"
         )
         self.config_description['装备刻印优先级'] = (
-            "填写希望获得的刻印词条关键词，不区分装备槏位，命中任意一项即算"
-            "满足；需要先开启“刷装备刻印”才会生效。"
         )
         self.config_description['刷装备刻印信用点下限'] = (
-            "商店购买装备追刻印时，当前信用点低于该数值则不购买（避免为了"
-            "刻印花费过多信用点）；设为0表示不限制。仅影响商店购买，"
-            "不影响免费获得的装备。"
+            "信用点高于该数值才会花钱刷新，否则不刷新。"
+            "仅影响商店购买，不影响免费获得的装备。"
         )
         self.config_description['刷空档'] = (
             "初始任务必须包含“移除2张”，否则重新开始；不能与“刷初始卡牌”同时使用。"
