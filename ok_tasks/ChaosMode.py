@@ -8,6 +8,7 @@ from config_io import (
     make_switch_local_config_callback,
     migrate_flash_priority_config_file,
     migrate_game_language_config_file,
+    migrate_route_priority_layers_config_file,
 )
 from config_sync import check_upload_if_needed, show_hot_configs_dialog
 from utils import (
@@ -55,6 +56,22 @@ class ChaosMode(TriggerTask):
         self.default_config['装备1号位优先级'] = ["蚀化臂铠"]
         self.default_config['装备2号位优先级'] = ["拷问工具箱"]
         self.default_config['装备3号位优先级'] = ["异象石碑"]
+        # 装备刻印功能：开启后装备分配逻辑改为"是否推进目标名+目标刻印进展"，
+        # 不再使用装备优先级+品质的原有比较逻辑。
+        self.default_config['刷装备刻印'] = False
+        self.default_config['装备刻印优先级'] = []
+        self.default_config['刷装备刻印信用点下限'] = 300
+        # 刻印专业模式：配置面板里的开关项（不再额外提供按钮）。开启后，
+        # 免费获得（非商店购买）的装备只要不能推进"目标名+目标刻印"的
+        # 进展，就直接提炼（分解）成信用点，不再转交给其他主战员占掉装备位。
+        self.default_config['刻印专业模式'] = False
+        # 商店删卡门槛（只在“刻印专业模式”下生效）：当前信用点**超过**该数值
+        # 时才允许在德朗商店花信用点删卡；0（默认）沿用旧行为——专业模式下本局
+        # 完全不删卡。
+        self.default_config['商店删卡信用点下限'] = 0
+        # 商店删卡次数上限（只在“刻印专业模式”下生效）：防止专业模式把信用点都
+        # 花在删卡上。只数德朗商店里删掉的卡牌，事件/三选一删卡不算在内。
+        self.default_config['商店删卡次数上限'] = 2
         self.default_config['卡牌奖励优先级'] = ["梦之边境"]
         self.default_config['首层刷特定闪光'] = False
         self.default_config['刷空档'] = False
@@ -66,8 +83,11 @@ class ChaosMode(TriggerTask):
         self.default_config['面具卡牌刻印'] = "自身攻击卡牌伤害总量提升30%"
         self.default_config['刷初始卡牌'] = ""
         self.default_config['只打第一层'] = False
-        # 路线节点优先级 (列表), 越靠前优先级越高
-        self.default_config['路线优先级'] = ["休息", "事件", "小怪", "精英"]
+        # 路线节点优先级 (列表), 越靠前优先级越高；第一层/第二层分开配置。
+        # 「商店」也是一项：带商店标志的节点按它在列表里的位置排序；列表里不写
+        # 「商店」时沿用旧行为（商店节点固定最优先）。
+        self.default_config['第一层路线优先级'] = ["商店", "休息", "事件", "小怪", "精英"]
+        self.default_config['第二层路线优先级'] = ["商店", "休息", "事件", "小怪", "精英"]
         self.default_config['几轮后停止(0为不停止)'] = 0
         self.default_config['第几层boss前自动暂停'] = "不暂停"
         self.node_status = {"shop": False, "flash_or_rest": False, "reach_final_boss": False, "final_boss_battle": False, "pass_final_boss_count": 0, 
@@ -76,6 +96,7 @@ class ChaosMode(TriggerTask):
                             "target_mask_card_position": -1,
                             "get_specific_flash": False,
                             "removed_card_count": 0,
+                            "shop_removed_card_count": 0,
                             "neutral_card_count": 0}
         self.member_status = {
             "equipment": {
@@ -109,6 +130,18 @@ class ChaosMode(TriggerTask):
         self.config_description['刷初始卡牌'] = (
             "填写目标卡牌名称后反复刷新初始卡牌；不能与“刷空档”同时使用。"
         )
+        self.config_description['刷装备刻印'] = (
+            "开启后原有的装备优先级+品质比较"
+            "逻辑不再生效。"
+        )
+        self.config_description['装备刻印优先级'] = (
+        )
+        self.config_description['刷装备刻印信用点下限'] = (
+            "信用点高于该数值才会花钱刷新，否则不刷新。"
+            "仅影响商店购买，不影响免费获得的装备。"
+        )
+        self.config_description['商店删卡信用点下限'] = "仅在“刻印专业模式”下生效。"
+        self.config_description['商店删卡次数上限'] = "仅在“刻印专业模式”下生效。"
         self.config_description['刷空档'] = (
             "初始任务必须包含“移除2张”，否则重新开始；不能与“刷初始卡牌”同时使用。"
         )
@@ -119,6 +152,7 @@ class ChaosMode(TriggerTask):
     def load_config(self):
         migrate_flash_priority_config_file(self)
         migrate_game_language_config_file(self)
+        migrate_route_priority_layers_config_file(self)
         super().load_config()
 
     def enable(self):

@@ -99,6 +99,40 @@ def migrate_game_language_config_file(task):
     write_json_file(config_file, data)
 
 
+def _migrate_route_priority_layers(data, allowed_config=None):
+    """把旧版单条「路线优先级」拆成第一层/第二层两条配置。
+
+    只对声明了「第一层路线优先级」的模式生效（卡厄思模式）；出击模式仍然
+    只有一条「路线优先级」，配置原样返回，行为不变。
+    """
+    if allowed_config is not None and "第一层路线优先级" not in allowed_config:
+        return data
+    if not isinstance(data, dict) or "路线优先级" not in data:
+        return data
+    from utils import ROUTE_PRIORITY_LAYER_KEYS, _normalize_route_priority
+    legacy = data.pop("路线优先级")
+    migrated = _normalize_route_priority(legacy)
+    for key in ROUTE_PRIORITY_LAYER_KEYS:
+        if not data.get(key):
+            data[key] = list(migrated)
+    return data
+
+
+def migrate_route_priority_layers_config_file(task):
+    """在框架加载本模式配置前，把本地旧版「路线优先级」拆分成两层配置。"""
+    if "第一层路线优先级" not in getattr(task, "default_config", {}):
+        return
+    config_file = get_relative_path(
+        Config.config_folder,
+        f"{task.__class__.__name__}.json",
+    )
+    data = read_json_file(config_file)
+    if not isinstance(data, dict) or "路线优先级" not in data:
+        return
+    _migrate_route_priority_layers(data)
+    write_json_file(config_file, data)
+
+
 def _export_config_to_text(task):
     """将任务的用户配置导出为 base64 编码文本。"""
     config_file = task.config.config_file

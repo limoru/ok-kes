@@ -509,6 +509,7 @@ def handle_chaos_mask_engraving(task: TriggerTask):
                 task.log_info(f"新刻印命中「{specify_text}」，交给确认按钮")
                 return False
             # 检查刷新
+            remaining = None
             refresh_box = find_box_at_point(task, 0.916, 0.810)
             if refresh_box:
                 match = re.search(r'(\d+)/3', refresh_box.name)
@@ -549,6 +550,7 @@ def handle_chaos_mask_engraving(task: TriggerTask):
             return False
 
         # 检查刷新
+        remaining = None
         refresh_box = find_box_at_point(task, 0.916, 0.810)
         if refresh_box:
             match = re.search(r'(\d+)/3', refresh_box.name)
@@ -577,6 +579,7 @@ def handle_chaos_mask_engraving(task: TriggerTask):
         return False
 
     # 未命中，检查可刷新次数
+    remaining = None
     refresh_box = find_box_at_point(task, 0.913, 0.667)
     if refresh_box:
         match = re.search(r'(\d+)/3', refresh_box.name)
@@ -589,8 +592,18 @@ def handle_chaos_mask_engraving(task: TriggerTask):
                 task.sleep(1)
                 return True
 
-    task.log_info("无可刷新次数，跳过")
-    return False
+    # 未命中配置且刷新次数为 0：直接点「跳过」，不能再 return False 落到
+    # 后面的通用「确认」按钮上，否则会把当前这条不匹配的刻印装到面具卡上。
+    task.log_info("未命中指定刻印且无可刷新次数，点击跳过")
+    skip_box = find_text(task, r'跳过')
+    if skip_box:
+        task.click_box(skip_box)
+    else:
+        # 该页「跳过」在右下角固定位置（替换模式下一直就是这么点的），
+        # 文本没识别到时也按固定坐标点，绝不落到通用「确认」按钮。
+        _move_and_click(task, 0.747, 0.932)
+    task.sleep(1)
+    return True
 
 
 def handle_mask_card(task: TriggerTask):

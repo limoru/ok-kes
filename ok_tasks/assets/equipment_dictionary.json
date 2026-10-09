@@ -1,0 +1,1905 @@
+{
+  "_readme": [
+    "装备词典：id -> 装备名称/所属装备 的固定映射表。",
+    "用途1：作为分享配置码的压缩基准（存id代替存完整装备名文本）。",
+    "用途2：无需重新识别装备类型文本，直接按名称查出该装备属于第几号装备。",
+    "",
+    "id 分段规则（按装备分段，一看编号即可判断所属装备，不需要另外查表）：",
+    "  1号位（攻击力）装备：id 区间 0~999。",
+    "  2号位（防御力）装备：id 区间 1000~1999。",
+    "  3号位（生命值）装备：id 区间 2000~2999。",
+    "每段预留1000个编号，新增装备时在对应装备的区间内使用一个从未用过的新 id",
+    "（区间内可以有空洞，不要求连续），不要跨区间借用编号。",
+    "注：区间预留多大只影响人工管理的便利性，不影响分享配置码的实际长度——",
+    "接入压缩编码时按“装备+装备内实际收录数量”计算最小位数，不会直接搬运",
+    "十进制 id 本身。",
+    "",
+    "name_zh_tw：繁体名称占位字段，暂未启用繁体支持，统一留空字符串即可；",
+    "后续启用繁体识别时直接在此字段补充对应繁体名，不需要改动数据结构。",
+    "",
+    "维护规则（务必遵守，否则会破坏已分享出去的配置码）：",
+    "1. 新增装备只能使用一个从未用过的新 id（在所属装备的区间内选取）。",
+    "2. 已存在的 id 一旦被使用（哪怕只被一个人分享过配置），永远不能删除、",
+    "   不能改指向别的装备名称、不能与其他条目交换 id。",
+    "3. 允许修正已存在条目的 name/name_zh_tw 拼写错误或补充/修正 slot 值，",
+    "   但 id 本身不能变。",
+    "4. slot 取值含义见 slots 字段：0=武器（攻击力），1=防具（防御力），2=饰品（生命值）。"
+  ],
+  "version": 1,
+  "slots": {
+    "0": "武器（攻击力）",
+    "1": "防具（防御力）",
+    "2": "饰品（生命值）"
+  },
+  "slot_id_ranges": {
+    "0": [0, 999],
+    "1": [1000, 1999],
+    "2": [2000, 2999]
+  },
+  "equipments": [
+    {
+      "id": 0,
+      "name": "蚀化臂铠",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "回荡在银河中的歌声",
+      "rarity": "稀有"
+    },
+    {
+      "id": 1,
+      "name": "M85军用手榴弹",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "全地区",
+      "rarity": "稀有"
+    },
+    {
+      "id": 2,
+      "name": "击落烈日之弓",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "裁决之沼,无间烬土",
+      "rarity": "传说"
+    },
+    {
+      "id": 3,
+      "name": "RFS-17",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "全地区",
+      "rarity": "传说"
+    },
+    {
+      "id": 4,
+      "name": "黑曜石剑",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "全地区",
+      "rarity": "稀有"
+    },
+    {
+      "id": 5,
+      "name": "绯刃",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "全地区",
+      "rarity": "传说"
+    },
+    {
+      "id": 6,
+      "name": "截骨机",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "全地区",
+      "rarity": "稀有"
+    },
+    {
+      "id": 7,
+      "name": "讥笑匕首",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "全地区",
+      "rarity": "传说"
+    },
+    {
+      "id": 8,
+      "name": "美食之书",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "全地区",
+      "rarity": "稀有"
+    },
+    {
+      "id": 9,
+      "name": "精英猎手",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "全地区",
+      "rarity": "稀有"
+    },
+    {
+      "id": 10,
+      "name": "震怒的火炬",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "全地区",
+      "rarity": "稀有"
+    },
+    {
+      "id": 11,
+      "name": "湖中倒映之剑",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "裁决之沼,无间烬土",
+      "rarity": "传说"
+    },
+    {
+      "id": 12,
+      "name": "闪光弹",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "全地区",
+      "rarity": "稀有"
+    },
+    {
+      "id": 13,
+      "name": "命令：108号",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "全地区",
+      "rarity": "稀有"
+    },
+    {
+      "id": 14,
+      "name": "神木枝桠",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "裁决之沼",
+      "rarity": "传说"
+    },
+    {
+      "id": 15,
+      "name": "阿萨辛之牙",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "全地区",
+      "rarity": "传说"
+    },
+    {
+      "id": 16,
+      "name": "欺骗暗影的匕首",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "裁决之沼,无间烬土",
+      "rarity": "传说"
+    },
+    {
+      "id": 17,
+      "name": "熄灭勇气之臂",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "无间烬土",
+      "rarity": "稀有"
+    },
+    {
+      "id": 18,
+      "name": "折断意志之箭袋",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "无间烬土",
+      "rarity": "稀有"
+    },
+    {
+      "id": 19,
+      "name": "斗争竖琴",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "无间烬土",
+      "rarity": "传说"
+    },
+    {
+      "id": 20,
+      "name": "窃取者的短刀",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "蓝罐",
+      "rarity": "稀有"
+    },
+    {
+      "id": 21,
+      "name": "钝骨刀",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "蓝罐",
+      "rarity": "稀有"
+    },
+    {
+      "id": 22,
+      "name": "处决者之刃",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "蓝罐",
+      "rarity": "传说"
+    },
+    {
+      "id": 23,
+      "name": "仪式用短刀",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "蓝罐",
+      "rarity": "传说"
+    },
+    {
+      "id": 24,
+      "name": "变异的权能",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "蓝罐",
+      "rarity": "独特"
+    },
+    {
+      "id": 25,
+      "name": "疯狂菜刀",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "蓝罐,双星的暗影,降临的混沌,幻象剧场",
+      "rarity": "传说"
+    },
+    {
+      "id": 26,
+      "name": "符文骑枪",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "降临的混沌",
+      "rarity": "传说"
+    },
+    {
+      "id": 27,
+      "name": "净化之火",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "降临的混沌",
+      "rarity": "传说"
+    },
+    {
+      "id": 28,
+      "name": "启示号角",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "降临的混沌",
+      "rarity": "传说"
+    },
+    {
+      "id": 29,
+      "name": "歌唱之剑",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "降临的混沌",
+      "rarity": "传说"
+    },
+    {
+      "id": 30,
+      "name": "过载电流冲击器",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "第零研究所",
+      "rarity": "稀有"
+    },
+    {
+      "id": 31,
+      "name": "变异波增幅器",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "第零研究所",
+      "rarity": "传说"
+    },
+    {
+      "id": 32,
+      "name": "W-52「多巴胺注射器」",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "第零研究所",
+      "rarity": "传说"
+    },
+    {
+      "id": 33,
+      "name": "异种孢子突触",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "第零研究所",
+      "rarity": "传说"
+    },
+    {
+      "id": 34,
+      "name": "千年木",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "无间烬土",
+      "rarity": "稀有"
+    },
+    {
+      "id": 35,
+      "name": "模糊荆棘",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "无间烬土",
+      "rarity": "传说"
+    },
+    {
+      "id": 36,
+      "name": "使团权杖",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "回荡在银河中的歌声",
+      "rarity": "传说"
+    },
+    {
+      "id": 37,
+      "name": "沉眠之钥",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "回荡在银河中的歌声",
+      "rarity": "传说"
+    },
+    {
+      "id": 38,
+      "name": "渗液双手剑",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "万花筒孵化场",
+      "rarity": "稀有"
+    },
+    {
+      "id": 39,
+      "name": "保护拳甲",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "万花筒孵化场",
+      "rarity": "传说"
+    },
+    {
+      "id": 40,
+      "name": "掠夺者鱼叉炮",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "万花筒孵化场",
+      "rarity": "稀有"
+    },
+    {
+      "id": 41,
+      "name": "复制体核心",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "第零研究所",
+      "rarity": "传说"
+    },
+    {
+      "id": 42,
+      "name": "奇美拉合金",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "第零研究所",
+      "rarity": "独特"
+    },
+    {
+      "id": 43,
+      "name": "审判之剑",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "无间烬土",
+      "rarity": "稀有"
+    },
+    {
+      "id": 44,
+      "name": "苍白孑然业火",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "无间烬土",
+      "rarity": "传说"
+    },
+    {
+      "id": 45,
+      "name": "灿烂的孑然业火",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "无间烬土",
+      "rarity": "独特"
+    },
+    {
+      "id": 46,
+      "name": "断裂的黄金羽毛笔",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "回荡在银河中的歌声",
+      "rarity": "稀有"
+    },
+    {
+      "id": 47,
+      "name": "渴望的左手",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "回荡在银河中的歌声",
+      "rarity": "传说"
+    },
+    {
+      "id": 48,
+      "name": "永恒钉楔",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "万花筒孵化场",
+      "rarity": "传说"
+    },
+    {
+      "id": 49,
+      "name": "扭曲的钻头",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "万花筒孵化场",
+      "rarity": "传说"
+    },
+    {
+      "id": 50,
+      "name": "紫蝴蝶的鞭子",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "双星的暗影",
+      "rarity": "传说"
+    },
+    {
+      "id": 51,
+      "name": "破损的波勒米卡之矛",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "双星的暗影",
+      "rarity": "传说"
+    },
+    {
+      "id": 52,
+      "name": "完整的波勒米卡之矛",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "双星的暗影",
+      "rarity": "独特"
+    },
+    {
+      "id": 53,
+      "name": "虫虫杀手",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "双星的暗影",
+      "rarity": "稀有"
+    },
+    {
+      "id": 54,
+      "name": "蕾皮多拉的鞭子",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "双星的暗影",
+      "rarity": "独特"
+    },
+    {
+      "id": 55,
+      "name": "被吞噬者的梦想",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "雾之都市",
+      "rarity": "传说"
+    },
+    {
+      "id": 56,
+      "name": "被侵吞者的虚无",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "雾之都市",
+      "rarity": "独特"
+    },
+    {
+      "id": 57,
+      "name": "进击的骑枪",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "裁决之沼,降临的混沌,幻象剧场",
+      "rarity": "传说"
+    },
+    {
+      "id": 58,
+      "name": "辉煌宝珠",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "降临的混沌",
+      "rarity": "独特"
+    },
+    {
+      "id": 59,
+      "name": "邪恶双手剑",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "双星的暗影",
+      "rarity": "独特"
+    },
+    {
+      "id": 60,
+      "name": "甲虫之角",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "双星的暗影",
+      "rarity": "独特"
+    },
+    {
+      "id": 61,
+      "name": "深渊虫之齿",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "双星的暗影",
+      "rarity": "传说"
+    },
+    {
+      "id": 62,
+      "name": "厄律西克同的破灭",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "双星的暗影",
+      "rarity": "传说"
+    },
+    {
+      "id": 63,
+      "name": "迷雾水晶球",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "雾之都市,第零研究所",
+      "rarity": "独特"
+    },
+    {
+      "id": 64,
+      "name": "未爆炸的等离子炸弹",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "雾之都市,第零研究所",
+      "rarity": "传说"
+    },
+    {
+      "id": 65,
+      "name": "猩红巨人的利爪",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "雾之都市,第零研究所",
+      "rarity": "传说"
+    },
+    {
+      "id": 66,
+      "name": "暗影之爪的指甲",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "全地区",
+      "rarity": "独特"
+    },
+    {
+      "id": 67,
+      "name": "大自然的敌意",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "蓝罐,雾之都市,第零研究所,无间烬土",
+      "rarity": "传说"
+    },
+    {
+      "id": 68,
+      "name": "变异的利爪",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "蓝罐,雾之都市,第零研究所,无间烬土",
+      "rarity": "传说"
+    },
+    {
+      "id": 69,
+      "name": "烽烟蔽日",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "全地区",
+      "rarity": "传说"
+    },
+    {
+      "id": 70,
+      "name": "混沌之识",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "全地区",
+      "rarity": "独特"
+    },
+    {
+      "id": 71,
+      "name": "乱世之触",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "全地区",
+      "rarity": "独特"
+    },
+    {
+      "id": 72,
+      "name": "暮色生命之花",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "裁决之沼",
+      "rarity": "稀有"
+    },
+    {
+      "id": 73,
+      "name": "生命之花",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "裁决之沼",
+      "rarity": "传说"
+    },
+    {
+      "id": 74,
+      "name": "恶木枝桠",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "裁决之沼",
+      "rarity": "传说"
+    },
+    {
+      "id": 75,
+      "name": "永劫枝桠",
+      "name_zh_tw": "",
+      "slot": 0,
+      "area": "裁决之沼",
+      "rarity": "独特"
+    },
+    {
+      "id": 1000,
+      "name": "拷问工具箱",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "蓝罐,双星的暗影,降临的混沌,幻象剧场",
+      "rarity": "传说"
+    },
+    {
+      "id": 1001,
+      "name": "侦察兵的军靴",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "全地区",
+      "rarity": "稀有"
+    },
+    {
+      "id": 1002,
+      "name": "改良战斗强化服",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "全地区",
+      "rarity": "稀有"
+    },
+    {
+      "id": 1003,
+      "name": "角斗士头盔",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "全地区",
+      "rarity": "稀有"
+    },
+    {
+      "id": 1004,
+      "name": "恶灵面具",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "裁决之沼",
+      "rarity": "稀有"
+    },
+    {
+      "id": 1005,
+      "name": "幸存者的兜帽",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "全地区",
+      "rarity": "稀有"
+    },
+    {
+      "id": 1006,
+      "name": "标准型防毒面具",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "全地区",
+      "rarity": "稀有"
+    },
+    {
+      "id": 1007,
+      "name": "云端漫游者",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "全地区",
+      "rarity": "传说"
+    },
+    {
+      "id": 1008,
+      "name": "不朽鳞片",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "裁决之沼,无间烬土",
+      "rarity": "传说"
+    },
+    {
+      "id": 1009,
+      "name": "加强型战斗强化服",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "全地区",
+      "rarity": "传说"
+    },
+    {
+      "id": 1010,
+      "name": "光明之翼",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "裁决之沼,降临的混沌,幻象剧场",
+      "rarity": "传说"
+    },
+    {
+      "id": 1011,
+      "name": "突击靴子",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "全地区",
+      "rarity": "传说"
+    },
+    {
+      "id": 1012,
+      "name": "火花面具",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "裁决之沼,无间烬土",
+      "rarity": "独特"
+    },
+    {
+      "id": 1013,
+      "name": "褪色牺牲之盾",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "无间烬土",
+      "rarity": "稀有"
+    },
+    {
+      "id": 1014,
+      "name": "胜者桂冠",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "无间烬土",
+      "rarity": "传说"
+    },
+    {
+      "id": 1015,
+      "name": "勇气手镯",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "无间烬土",
+      "rarity": "独特"
+    },
+    {
+      "id": 1016,
+      "name": "命定容器",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "蓝罐",
+      "rarity": "传说"
+    },
+    {
+      "id": 1017,
+      "name": "誓死拳甲",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "蓝罐",
+      "rarity": "稀有"
+    },
+    {
+      "id": 1018,
+      "name": "咒术玩偶",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "蓝罐,双星的暗影,降临的混沌,幻象剧场",
+      "rarity": "传说"
+    },
+    {
+      "id": 1019,
+      "name": "强缚锁链",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "蓝罐,双星的暗影,降临的混沌,幻象剧场",
+      "rarity": "传说"
+    },
+    {
+      "id": 1020,
+      "name": "扭曲规则",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "降临的混沌",
+      "rarity": "传说"
+    },
+    {
+      "id": 1021,
+      "name": "太古规则",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "降临的混沌",
+      "rarity": "独特"
+    },
+    {
+      "id": 1022,
+      "name": "脑电波阻断头盔",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "第零研究所",
+      "rarity": "稀有"
+    },
+    {
+      "id": 1023,
+      "name": "不完整甲壳",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "第零研究所",
+      "rarity": "稀有"
+    },
+    {
+      "id": 1024,
+      "name": "植物型义体",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "无间烬土",
+      "rarity": "传说"
+    },
+    {
+      "id": 1025,
+      "name": "藤蔓伪装",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "无间烬土",
+      "rarity": "稀有"
+    },
+    {
+      "id": 1026,
+      "name": "苔藓护甲",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "无间烬土",
+      "rarity": "稀有"
+    },
+    {
+      "id": 1027,
+      "name": "情感面具",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "回荡在银河中的歌声",
+      "rarity": "传说"
+    },
+    {
+      "id": 1028,
+      "name": "心灵斗篷",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "回荡在银河中的歌声",
+      "rarity": "稀有"
+    },
+    {
+      "id": 1029,
+      "name": "噩梦发卡",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "回荡在银河中的歌声",
+      "rarity": "传说"
+    },
+    {
+      "id": 1030,
+      "name": "几丁质盾牌",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "万花筒孵化场",
+      "rarity": "传说"
+    },
+    {
+      "id": 1031,
+      "name": "精华动力臂铠",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "万花筒孵化场",
+      "rarity": "稀有"
+    },
+    {
+      "id": 1032,
+      "name": "污染之茧斗篷",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "万花筒孵化场",
+      "rarity": "传说"
+    },
+    {
+      "id": 1033,
+      "name": "火箭装饰披风",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "第零研究所",
+      "rarity": "传说"
+    },
+    {
+      "id": 1034,
+      "name": "自由之翼",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "第零研究所",
+      "rarity": "传说"
+    },
+    {
+      "id": 1035,
+      "name": "闪耀里拉琴",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "无间烬土",
+      "rarity": "稀有"
+    },
+    {
+      "id": 1036,
+      "name": "遗忘之长袍",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "无间烬土",
+      "rarity": "传说"
+    },
+    {
+      "id": 1037,
+      "name": "藤王之面具",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "无间烬土",
+      "rarity": "传说"
+    },
+    {
+      "id": 1038,
+      "name": "无法理解的古物",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "回荡在银河中的歌声",
+      "rarity": "传说"
+    },
+    {
+      "id": 1039,
+      "name": "纤细的锁骨",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "回荡在银河中的歌声",
+      "rarity": "传说"
+    },
+    {
+      "id": 1040,
+      "name": "粉碎的使者之翼",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "回荡在银河中的歌声",
+      "rarity": "传说"
+    },
+    {
+      "id": 1041,
+      "name": "碎珀蘑菇",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "万花筒孵化场",
+      "rarity": "稀有"
+    },
+    {
+      "id": 1042,
+      "name": "污染的无人机镜头",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "万花筒孵化场",
+      "rarity": "传说"
+    },
+    {
+      "id": 1043,
+      "name": "继承残痕",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "万花筒孵化场",
+      "rarity": "独特"
+    },
+    {
+      "id": 1044,
+      "name": "普鲁伊德的甲壳",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "双星的暗影",
+      "rarity": "稀有"
+    },
+    {
+      "id": 1045,
+      "name": "污染的头盔",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "雾之都市",
+      "rarity": "稀有"
+    },
+    {
+      "id": 1046,
+      "name": "M.S.S领域",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "雾之都市",
+      "rarity": "传说"
+    },
+    {
+      "id": 1047,
+      "name": "祝圣光轮",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "降临的混沌",
+      "rarity": "独特"
+    },
+    {
+      "id": 1048,
+      "name": "使者之环",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "裁决之沼,降临的混沌,幻象剧场",
+      "rarity": "传说"
+    },
+    {
+      "id": 1049,
+      "name": "生长的甲壳",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "双星的暗影",
+      "rarity": "传说"
+    },
+    {
+      "id": 1050,
+      "name": "夜蛾之舞",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "双星的暗影",
+      "rarity": "传说"
+    },
+    {
+      "id": 1051,
+      "name": "群集之翼",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "双星的暗影",
+      "rarity": "独特"
+    },
+    {
+      "id": 1052,
+      "name": "再生型肋骨",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "雾之都市,第零研究所",
+      "rarity": "传说"
+    },
+    {
+      "id": 1053,
+      "name": "虚空残片",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "雾之都市,第零研究所",
+      "rarity": "独特"
+    },
+    {
+      "id": 1054,
+      "name": "贪婪的燕尾服",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "雾之都市,第零研究所",
+      "rarity": "传说"
+    },
+    {
+      "id": 1055,
+      "name": "星光披风",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "裁决之沼,无间烬土",
+      "rarity": "独特"
+    },
+    {
+      "id": 1056,
+      "name": "精灵王的金冠",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "裁决之沼,无间烬土",
+      "rarity": "传说"
+    },
+    {
+      "id": 1057,
+      "name": "狼群韦恩的脊骨",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "蓝罐,雾之都市,第零研究所,无间烬土",
+      "rarity": "传说"
+    },
+    {
+      "id": 1058,
+      "name": "野性毛皮披风",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "全地区",
+      "rarity": "独特"
+    },
+    {
+      "id": 1059,
+      "name": "肯特里斯几丁质盔甲",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "全地区",
+      "rarity": "独特"
+    },
+    {
+      "id": 1060,
+      "name": "凝视护盾",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "蓝罐,雾之都市,第零研究所,无间烬土",
+      "rarity": "传说"
+    },
+    {
+      "id": 1061,
+      "name": "突击护手",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "全地区",
+      "rarity": "稀有"
+    },
+    {
+      "id": 1062,
+      "name": "泰坦型战斗强化服",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "全地区",
+      "rarity": "稀有"
+    },
+    {
+      "id": 1063,
+      "name": "奥义师战斗强化服",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "全地区",
+      "rarity": "传说"
+    },
+    {
+      "id": 1064,
+      "name": "怪异之壳",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "全地区",
+      "rarity": "独特"
+    },
+    {
+      "id": 1065,
+      "name": "灾难之像",
+      "name_zh_tw": "",
+      "slot": 1,
+      "area": "全地区",
+      "rarity": "独特"
+    },
+    {
+      "id": 2000,
+      "name": "异象石碑",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "回荡在银河中的歌声",
+      "rarity": "传说"
+    },
+    {
+      "id": 2001,
+      "name": "怀抱野火的骨戒",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "裁决之沼,无间烬土",
+      "rarity": "传说"
+    },
+    {
+      "id": 2002,
+      "name": "破坏之月",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "全地区",
+      "rarity": "传说"
+    },
+    {
+      "id": 2003,
+      "name": "非典型立方体",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "全地区",
+      "rarity": "稀有"
+    },
+    {
+      "id": 2004,
+      "name": "魔力蓝宝石",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "全地区",
+      "rarity": "稀有"
+    },
+    {
+      "id": 2005,
+      "name": "时间调节器",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "全地区",
+      "rarity": "稀有"
+    },
+    {
+      "id": 2006,
+      "name": "女神之泪",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "全地区",
+      "rarity": "传说"
+    },
+    {
+      "id": 2007,
+      "name": "黄金心脏",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "全地区",
+      "rarity": "传说"
+    },
+    {
+      "id": 2008,
+      "name": "平行宇宙耦合体",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "全地区",
+      "rarity": "稀有"
+    },
+    {
+      "id": 2009,
+      "name": "森林三叶草",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "裁决之沼",
+      "rarity": "稀有"
+    },
+    {
+      "id": 2010,
+      "name": "绝对零度四面体",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "全地区",
+      "rarity": "稀有"
+    },
+    {
+      "id": 2011,
+      "name": "量子收集器",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "全地区",
+      "rarity": "传说"
+    },
+    {
+      "id": 2012,
+      "name": "深绿白昼",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "裁决之沼",
+      "rarity": "传说"
+    },
+    {
+      "id": 2013,
+      "name": "深绿黑夜",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "裁决之沼",
+      "rarity": "传说"
+    },
+    {
+      "id": 2014,
+      "name": "宝石之心",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "全地区",
+      "rarity": "传说"
+    },
+    {
+      "id": 2015,
+      "name": "崩塌荣誉发射器",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "无间烬土",
+      "rarity": "稀有"
+    },
+    {
+      "id": 2016,
+      "name": "陈旧荣耀充能器",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "无间烬土",
+      "rarity": "稀有"
+    },
+    {
+      "id": 2017,
+      "name": "战斗用鼓",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "无间烬土",
+      "rarity": "传说"
+    },
+    {
+      "id": 2018,
+      "name": "角斗士徽记",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "无间烬土",
+      "rarity": "传说"
+    },
+    {
+      "id": 2019,
+      "name": "狂怒药水",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "无间烬土",
+      "rarity": "传说"
+    },
+    {
+      "id": 2020,
+      "name": "疯子的艺术作品",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "蓝罐",
+      "rarity": "传说"
+    },
+    {
+      "id": 2021,
+      "name": "卡厄思智识书",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "蓝罐",
+      "rarity": "传说"
+    },
+    {
+      "id": 2022,
+      "name": "虚空的赤石",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "蓝罐",
+      "rarity": "稀有"
+    },
+    {
+      "id": 2023,
+      "name": "禁忌智识书",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "蓝罐",
+      "rarity": "独特"
+    },
+    {
+      "id": 2024,
+      "name": "鲜艳赤石",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "蓝罐",
+      "rarity": "传说"
+    },
+    {
+      "id": 2025,
+      "name": "使团的证物",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "蓝罐",
+      "rarity": "传说"
+    },
+    {
+      "id": 2026,
+      "name": "入会凭证",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "蓝罐",
+      "rarity": "稀有"
+    },
+    {
+      "id": 2027,
+      "name": "暗色斑斑的坠饰",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "蓝罐,双星的暗影,降临的混沌,幻象剧场",
+      "rarity": "传说"
+    },
+    {
+      "id": 2028,
+      "name": "混沌骰子",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "蓝罐,幻象剧场",
+      "rarity": "独特"
+    },
+    {
+      "id": 2029,
+      "name": "守护核心",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "降临的混沌",
+      "rarity": "传说"
+    },
+    {
+      "id": 2030,
+      "name": "符文代码",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "降临的混沌",
+      "rarity": "稀有"
+    },
+    {
+      "id": 2031,
+      "name": "侵蚀核心",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "降临的混沌",
+      "rarity": "传说"
+    },
+    {
+      "id": 2032,
+      "name": "堕落核心",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "降临的混沌",
+      "rarity": "独特"
+    },
+    {
+      "id": 2033,
+      "name": "神经黑客模块",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "第零研究所",
+      "rarity": "稀有"
+    },
+    {
+      "id": 2034,
+      "name": "过量免疫激素",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "第零研究所",
+      "rarity": "稀有"
+    },
+    {
+      "id": 2035,
+      "name": "未识别修复液",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "第零研究所",
+      "rarity": "传说"
+    },
+    {
+      "id": 2036,
+      "name": "超导蛋白质",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "第零研究所",
+      "rarity": "传说"
+    },
+    {
+      "id": 2037,
+      "name": "世界树之叶",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "无间烬土",
+      "rarity": "传说"
+    },
+    {
+      "id": 2038,
+      "name": "植物玩偶",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "无间烬土",
+      "rarity": "稀有"
+    },
+    {
+      "id": 2039,
+      "name": "发光蘑菇",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "无间烬土",
+      "rarity": "传说"
+    },
+    {
+      "id": 2040,
+      "name": "哀嚎福音",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "回荡在银河中的歌声",
+      "rarity": "稀有"
+    },
+    {
+      "id": 2041,
+      "name": "精华残片项链",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "万花筒孵化场",
+      "rarity": "传说"
+    },
+    {
+      "id": 2042,
+      "name": "掠夺者扫描装置",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "万花筒孵化场",
+      "rarity": "稀有"
+    },
+    {
+      "id": 2043,
+      "name": "管理员身份证",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "第零研究所",
+      "rarity": "稀有"
+    },
+    {
+      "id": 2044,
+      "name": "优秀个体之证",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "第零研究所",
+      "rarity": "传说"
+    },
+    {
+      "id": 2045,
+      "name": "禁忌的根源",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "第零研究所",
+      "rarity": "传说"
+    },
+    {
+      "id": 2046,
+      "name": "金色之钟",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "无间烬土",
+      "rarity": "稀有"
+    },
+    {
+      "id": 2047,
+      "name": "召唤的光团",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "无间烬土",
+      "rarity": "稀有"
+    },
+    {
+      "id": 2048,
+      "name": "褪色的枝干",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "无间烬土",
+      "rarity": "稀有"
+    },
+    {
+      "id": 2049,
+      "name": "闪耀的世界树枝干",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "无间烬土",
+      "rarity": "传说"
+    },
+    {
+      "id": 2050,
+      "name": "释放的精髓",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "无间烬土",
+      "rarity": "独特"
+    },
+    {
+      "id": 2051,
+      "name": "只剩一只的结婚戒指",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "回荡在银河中的歌声",
+      "rarity": "稀有"
+    },
+    {
+      "id": 2052,
+      "name": "某人的信",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "回荡在银河中的歌声",
+      "rarity": "稀有"
+    },
+    {
+      "id": 2053,
+      "name": "唱赞歌的双唇",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "回荡在银河中的歌声",
+      "rarity": "传说"
+    },
+    {
+      "id": 2054,
+      "name": "从壁画中抠出的眼珠",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "回荡在银河中的歌声",
+      "rarity": "独特"
+    },
+    {
+      "id": 2055,
+      "name": "最后的日志",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "万花筒孵化场",
+      "rarity": "稀有"
+    },
+    {
+      "id": 2056,
+      "name": "万花筒碎片",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "万花筒孵化场",
+      "rarity": "传说"
+    },
+    {
+      "id": 2057,
+      "name": "封闭电路接口",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "万花筒孵化场",
+      "rarity": "传说"
+    },
+    {
+      "id": 2058,
+      "name": "循环之环",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "万花筒孵化场",
+      "rarity": "传说"
+    },
+    {
+      "id": 2059,
+      "name": "入侵者观察记录",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "万花筒孵化场",
+      "rarity": "传说"
+    },
+    {
+      "id": 2060,
+      "name": "蕾皮多拉的翅膀",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "双星的暗影",
+      "rarity": "传说"
+    },
+    {
+      "id": 2061,
+      "name": "基拉克核心",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "双星的暗影",
+      "rarity": "传说"
+    },
+    {
+      "id": 2062,
+      "name": "急救包",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "双星的暗影",
+      "rarity": "稀有"
+    },
+    {
+      "id": 2063,
+      "name": "亡魂之花",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "雾之都市",
+      "rarity": "传说"
+    },
+    {
+      "id": 2064,
+      "name": "魂之宝珠",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "雾之都市",
+      "rarity": "稀有"
+    },
+    {
+      "id": 2065,
+      "name": "饥饿者的肚子",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "雾之都市",
+      "rarity": "稀有"
+    },
+    {
+      "id": 2066,
+      "name": "M.S.S数据盘",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "雾之都市",
+      "rarity": "稀有"
+    },
+    {
+      "id": 2067,
+      "name": "虚无启示录",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "雾之都市",
+      "rarity": "独特"
+    },
+    {
+      "id": 2068,
+      "name": "贪食之眼",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "雾之都市",
+      "rarity": "独特"
+    },
+    {
+      "id": 2069,
+      "name": "M.S.S数据盘SE",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "雾之都市",
+      "rarity": "传说"
+    },
+    {
+      "id": 2070,
+      "name": "铅色灵液",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "裁决之沼,降临的混沌,幻象剧场",
+      "rarity": "传说"
+    },
+    {
+      "id": 2071,
+      "name": "惩罚者之眼",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "降临的混沌",
+      "rarity": "独特"
+    },
+    {
+      "id": 2072,
+      "name": "维亚迪乌斯原子炉",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "裁决之沼,降临的混沌,幻象剧场",
+      "rarity": "传说"
+    },
+    {
+      "id": 2073,
+      "name": "黄金律",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "裁决之沼,降临的混沌,幻象剧场",
+      "rarity": "传说"
+    },
+    {
+      "id": 2074,
+      "name": "脉动之卵",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "双星的暗影",
+      "rarity": "独特"
+    },
+    {
+      "id": 2075,
+      "name": "天生的掠食者",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "双星的暗影",
+      "rarity": "传说"
+    },
+    {
+      "id": 2076,
+      "name": "猎食的群体",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "双星的暗影",
+      "rarity": "传说"
+    },
+    {
+      "id": 2077,
+      "name": "无眼者之瞳",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "雾之都市,第零研究所",
+      "rarity": "传说"
+    },
+    {
+      "id": 2078,
+      "name": "帕拉西亚之珠",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "雾之都市,第零研究所",
+      "rarity": "传说"
+    },
+    {
+      "id": 2079,
+      "name": "禁灭之灯",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "雾之都市,第零研究所",
+      "rarity": "传说"
+    },
+    {
+      "id": 2080,
+      "name": "冬眠的种子",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "裁决之沼,无间烬土",
+      "rarity": "独特"
+    },
+    {
+      "id": 2081,
+      "name": "远古灵魂的召唤",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "裁决之沼,无间烬土",
+      "rarity": "传说"
+    },
+    {
+      "id": 2082,
+      "name": "大自然的礼物",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "蓝罐,雾之都市,第零研究所,无间烬土",
+      "rarity": "传说"
+    },
+    {
+      "id": 2083,
+      "name": "不会风化的石头",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "蓝罐,雾之都市,第零研究所,无间烬土",
+      "rarity": "传说"
+    },
+    {
+      "id": 2084,
+      "name": "沮丧的首领之眼",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "全地区",
+      "rarity": "独特"
+    },
+    {
+      "id": 2085,
+      "name": "次元方块",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "全地区",
+      "rarity": "传说"
+    },
+    {
+      "id": 2086,
+      "name": "灰色球体",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "全地区",
+      "rarity": "传说"
+    },
+    {
+      "id": 2087,
+      "name": "随机之球",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "全地区",
+      "rarity": "独特"
+    },
+    {
+      "id": 2088,
+      "name": "错乱之骰",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "全地区",
+      "rarity": "独特"
+    },
+    {
+      "id": 2089,
+      "name": "盗猎者的探路器",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "裁决之沼",
+      "rarity": "稀有"
+    },
+    {
+      "id": 2090,
+      "name": "深绿桎梏",
+      "name_zh_tw": "",
+      "slot": 2,
+      "area": "裁决之沼",
+      "rarity": "独特"
+    }
+  ]
+}

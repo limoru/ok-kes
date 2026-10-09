@@ -1,13 +1,29 @@
 from ok import TriggerTask
 
 import re
+from collections import namedtuple
 import random
 import time
 import sys
+import json
 import cv2
 import os
 import numpy as np
 from opencc import OpenCC
+
+from utils_equipment_engraving import (
+    PRO_MODE_ACTION_ESCAPE,
+    PRO_MODE_ACTION_STOP_FOR_REVIEW,
+    PRO_MODE_ACTION_PAUSE_NO_EXIT,
+    decide_pro_mode_check_point_action,
+    is_pro_mode_escape_check_point,
+    name_only_candidate_slot,
+    resolve_candidate_engraving_flag,
+    resolve_slot_description_after_install,
+    should_assign_to_target_member,
+    should_refine_free_equipment,
+    slots_all_completed,
+)
 
 _jp2t = OpenCC('jp2t')  # 日文新字体转繁体
 _t2s = OpenCC('t2s')  # 繁体转简体
@@ -138,26 +154,133 @@ def _get_game_text(task: TriggerTask, default_text):
     return mapping.get(default_text, default_text)
 
 
-def _migrate_route_boss_to_elite(task: TriggerTask):
-    """迁移用户配置中"路线优先级"的"boss"为"精英"（兼容旧配置）。"""
+# 装备词典文件路径：id <-> 装备名称/所属装备 的固定映射表。
+# 详见文件内 "_readme" 字段的维护规则说明。
+_EQUIPMENT_DICTIONARY_FILE = os.path.join(
+    os.path.dirname(__file__), 'assets', 'equipment_dictionary.json'
+)
+# 进程内缓存，程序启动后首次用到时加载一次，之后复用，不重复读盘。
+_EQUIPMENT_DICTIONARY_CACHE = None
+
+
+def _load_equipment_dictionary():
+    """加载装备词典（带进程内缓存），返回统一结构：
+    {
+        "by_id": {int id: {"name": str, "slot": int|None}},
+        "by_name": {str name: {"id": int, "slot": int|None}},
+    }
+    文件缺失或格式错误时返回空结构，不影响主流程运行。
+    """
+    global _EQUIPMENT_DICTIONARY_CACHE
+    if _EQUIPMENT_DICTIONARY_CACHE is not None:
+        return _EQUIPMENT_DICTIONARY_CACHE
+
+    by_id = {}
+    by_name = {}
     try:
-        if hasattr(task, 'config') and '路线优先级' in task.config:
-            priority = task.config['路线优先级']
-            if isinstance(priority, (list, tuple)):
-                new_priority = ["精英" if v == "boss" else v for v in priority]
-                if new_priority != list(priority):
-                    task.config['路线优先级'] = new_priority
-                    from ok.gui.Communicate import communicate
-                    communicate.task_list_updated.emit()
-                    task.log_info(f"迁移路线优先级配置: boss→精英 {new_priority}")
+        with open(_EQUIPMENT_DICTIONARY_FILE, 'r', encoding='utf-8') as f:
+            raw = json.load(f)
+        for entry in raw.get('equipments', []):
+            entry_id = entry.get('id')
+            name = entry.get('name')
+            slot = entry.get('slot')
+            if not isinstance(entry_id, int) or not isinstance(name, str) or not name:
+                continue
+            slot = slot if isinstance(slot, int) else None
+            by_id[entry_id] = {"name": name, "slot": slot}
+            by_name[name] = {"id": entry_id, "slot": slot}
+    except Exception:
+        by_id = {}
+        by_name = {}
+
+    _EQUIPMENT_DICTIONARY_CACHE = {"by_id": by_id, "by_name": by_name}
+    return _EQUIPMENT_DICTIONARY_CACHE
+
+
+def get_equipment_id(name):
+    """按装备名称查询词典编号；未收录时返回 None。"""
+    entry = _load_equipment_dictionary()["by_name"].get(name)
+    return entry["id"] if entry else None
+
+
+def get_equipment_name(equipment_id):
+    """按词典编号查询装备名称；未收录时返回 None。"""
+    entry = _load_equipment_dictionary()["by_id"].get(equipment_id)
+    return entry["name"] if entry else None
+
+
+def get_equipment_slot_by_name(name):
+    """按装备名称查询所属装备下标（0/1/2）；未收录或未标注装备时返回 None。"""
+    entry = _load_equipment_dictionary()["by_name"].get(name)
+    return entry["slot"] if entry else None
+
+
+ROUTE_PRIORITY_DEFAULT = ["商店", "休息", "事件", "小怪", "精英"]
+
+# 路线优先级按层分开配置：0=第一层，>=1=第二层。
+# 两层都没配置时回退旧配置「路线优先级」，再回退默认顺序。
+ROUTE_PRIORITY_LAYER_KEYS = ("第一层路线优先级", "第二层路线优先级")
+
+# 列表项写法归一：旧配置里出现过英文/别名写法，统一成界面上的中文名。
+ROUTE_PRIORITY_ALIASES = {"boss": "精英", "shop": "商店"}
+
+
+def _normalize_route_priority(value, default=None):
+    """规整路线优先级列表：统一别名写法，非列表或空列表回退默认顺序。"""
+    if isinstance(value, (list, tuple)):
+        priority = [
+            ROUTE_PRIORITY_ALIASES.get(item, item) if isinstance(item, str) else item
+            for item in value
+        ]
+        if priority:
+            return priority
+    return list(ROUTE_PRIORITY_DEFAULT if default is None else default)
+
+
+def _migrate_route_boss_to_elite(task: TriggerTask):
+    """迁移用户配置中路线优先级的旧写法（如 "boss"→"精英"、"shop"→"商店"）。"""
+    try:
+        if not hasattr(task, 'config'):
+            return
+        for key in ('路线优先级',) + ROUTE_PRIORITY_LAYER_KEYS:
+            if key not in task.config:
+                continue
+            priority = task.config[key]
+            if not isinstance(priority, (list, tuple)):
+                continue
+            new_priority = [
+                ROUTE_PRIORITY_ALIASES.get(v, v) if isinstance(v, str) else v
+                for v in priority
+            ]
+            if new_priority != list(priority):
+                task.config[key] = new_priority
+                from ok.gui.Communicate import communicate
+                communicate.task_list_updated.emit()
+                task.log_info(f"迁移{key}的旧写法: {new_priority}")
     except Exception:
         pass
 
 
-def _get_route_priority(task: TriggerTask):
-    """读取路线节点优先级配置，返回列表；解析失败使用默认顺序。"""
-    value = _get_config_value(task, '路线优先级', ["休息", "事件", "小怪", "精英"])
-    return list(value) if isinstance(value, (list, tuple)) else ["休息", "事件", "小怪", "精英"]
+def _get_route_priority(task: TriggerTask, layer_index=None):
+    """读取路线节点优先级配置，返回列表；解析失败使用默认顺序。
+
+    layer_index 为 None 时只读旧配置「路线优先级」，出击模式等旧调用方行为不变。
+    传入层号时按层读取（0=第一层，>=1=第二层），本层未配置或配置为空时依次回退：
+    另一层配置 -> 旧配置「路线优先级」 -> 默认顺序。
+    """
+    if layer_index is None:
+        return _normalize_route_priority(
+            _get_config_value(task, '路线优先级', None)
+        )
+    if layer_index <= 0:
+        layer_key, other_key = ROUTE_PRIORITY_LAYER_KEYS
+    else:
+        other_key, layer_key = ROUTE_PRIORITY_LAYER_KEYS
+    for key in (layer_key, other_key, '路线优先级'):
+        value = _get_config_value(task, key, None)
+        if value:
+            return _normalize_route_priority(value)
+    return list(ROUTE_PRIORITY_DEFAULT)
 
 
 # ------------------------- 通用工具 -------------------------
@@ -188,8 +311,31 @@ def _neutral_card_limit_reached(task: TriggerTask):
     return acquired >= limit
 
 
-def _record_removed_cards(task: TriggerTask, count=1):
-    """记录本局实际完成移除的卡牌数量。"""
+def _mark_pending_shop_removal(task: TriggerTask):
+    """标记"这次删卡由德朗商店的「移除卡牌」入口发起"。"""
+    task._pending_shop_removal = True
+
+
+def _consume_pending_shop_removal(task: TriggerTask) -> bool:
+    """取下"这次删卡由商店入口发起"的标记，取完即清。
+
+    商店删卡与事件/三选一删卡分开计数：商店入口点开删卡页之后，真正的"删除"
+    要等 handle_remove / handle_three_choice_card_remove 点下「移除」才发生，
+    所以入口处只打标记，删成功时再按标记把数字计进
+    `node_status['shop_removed_card_count']`。
+    """
+    pending = bool(getattr(task, "_pending_shop_removal", False))
+    task._pending_shop_removal = False
+    return pending
+
+
+def _record_removed_cards(task: TriggerTask, count=1, from_shop=False):
+    """记录本局实际完成移除的卡牌数量。
+
+    `from_shop=True` 表示这次删卡是德朗商店的「移除卡牌」入口发起的，除了本局
+    删卡总数，还单独计入 `node_status['shop_removed_card_count']`（商店删卡次数
+    上限只看这个数，事件/三选一删卡不占用商店额度）。
+    """
     node_status = getattr(task, "node_status", None)
     if not isinstance(node_status, dict):
         return
@@ -197,10 +343,16 @@ def _record_removed_cards(task: TriggerTask, count=1):
     node_status["removed_card_count"] = (
         node_status.get("removed_card_count", 0) + count
     )
-    task.log_info(
+    message = (
         f"本局移除卡牌数量增加{count}，"
         f"当前共{node_status['removed_card_count']}张"
     )
+    if from_shop:
+        node_status["shop_removed_card_count"] = (
+            node_status.get("shop_removed_card_count", 0) + count
+        )
+        message += f"（其中商店删卡{node_status['shop_removed_card_count']}张）"
+    task.log_info(message)
 
 
 def _record_neutral_card(task: TriggerTask):
@@ -941,29 +1093,36 @@ def find_best_map_route_by_priority(map_info, node_type_priority):
     }
     highest_priority_weight = max(priority_weights.values(), default=1)
     shop_bonus = highest_priority_weight * 2
+    # 优先级列表里写了「商店」时，带商店标志的节点改按「商店」自己的排名计分，
+    # 和休息/小怪这些一样只是一项；没写时沿用旧的固定加成（商店永远最优先），
+    # 保证老配置行为不变。
+    shop_in_priority = "商店" in node_type_priority
 
     def best_route_from(node_id):
         if node_id in route_cache:
             return route_cache[node_id]
         node = node_by_id[node_id]
-        own_counts = tuple(
-            int(node["type"] == node_type)
-            for node_type in node_type_priority
-        )
-        own_shop_count = int(any(
+        has_shop = any(
             item["feature_name"] == "shop_in_map"
             for item in node.get("special_features", [])
-        ))
+        )
+        scoring_type = "商店" if (shop_in_priority and has_shop) else node["type"]
+        own_counts = tuple(
+            int(scoring_type == node_type)
+            for node_type in node_type_priority
+        )
         own_special_score = sum(
             item["priority"]
             for item in node.get("special_features", [])
             if item["feature_name"] != "shop_in_map"
         )
         own_weighted_score = (
-            priority_weights.get(node["type"], 0)
-            + own_shop_count * shop_bonus
-            + own_special_score
+            priority_weights.get(scoring_type, 0) + own_special_score
         )
+        if has_shop and not shop_in_priority:
+            own_weighted_score += shop_bonus
+        # 商店已经进优先级列表时不再额外给"多带商店"的加分，避免和配置打架。
+        own_shop_count = int(has_shop) if not shop_in_priority else 0
         next_node_ids = adjacency.get(node_id, [])
         if not next_node_ids:
             result = (
@@ -1544,6 +1703,9 @@ def select_card(task: TriggerTask, card_names, count=1, action=""):
             task.click_box(button)
             if action == "移除":
                 task._pending_removed_card_count = 0
+                # 这次删卡放弃了：把商店删卡的标记一并清掉，免得下一次事件/
+                # 三选一删卡被误记成商店删卡。
+                _consume_pending_shop_removal(task)
             return True
 
     cards = recognize_cards_in_deck(task, page=f"{page}-兜底")
@@ -1583,7 +1745,7 @@ def is_button_active(task: TriggerTask, button_box):
         bool: True表示按钮可点击（激活），False表示不可点击（未激活/灰色）
     """
     # 计算左侧检测区域（按钮图标/背景区域）
-    # 根据用户提供的例子推算比例：
+    # 根据按钮文本与左侧图标区域的比例关系计算：
     # 按钮box: (0.898, 0.908, 0.941, 0.950) w=0.043, h=0.042
     # 左侧区域: (0.866, 0.912, 0.895, 0.947) w=0.029, h=0.035
     # 左侧区域宽度 = 按钮宽度 * 0.67，x = 按钮x - 左侧区域宽度 * 1.1
@@ -1891,7 +2053,7 @@ def handle_center_confirm(task: TriggerTask):
 
 
 def handle_settlement(task: TriggerTask):
-    """"结算"按钮。"""
+    """点击"结算"按钮。"""
     box = find_box_at_point(task, 0.941, 0.917)
     if box and _clean_match(box.name, "结算"):
         _move_and_click(task, 0.941, 0.917)
@@ -1906,7 +2068,7 @@ def handle_settlement(task: TriggerTask):
 
 
 def handle_skip(task: TriggerTask):
-    """"跳过"按钮。"""
+    """点击"跳过"按钮。"""
     box = find_box_at_point(task, 0.941, 0.917)
     if box and _clean_match(box.name, "跳过"):
         task.log_info("跳过页面触发跳过事件，点击「跳过」按钮")
@@ -2158,14 +2320,40 @@ def _equipment_priority(task: TriggerTask, slot):
     return list(priority) if isinstance(priority, (list, tuple)) else []
 
 
+
+# 装备名比较前的归一化：只保留中文/英文/数字，去掉中英文引号、书名号、
+# 连字符、空格等 OCR 容易识别错漏的符号，以及图标/emoji 字符。
+# 货架列表页和购买详情页对同一件装备的 OCR 结果常常在这些字符上不一致
+# （例如货架读到"时间调节器"，详情页读到"时间调节器🎆"），不归一化就会
+# 导致整条装备名匹配失败（例如"W-52「多巴胺注射器」"）。
+_EQUIPMENT_NAME_PUNCTUATION_PATTERN = re.compile(
+    r'[^\w]'
+)
+
+
+def _normalize_equipment_name(name):
+    """去除装备名中容易被 OCR 误识别的标点符号和图标字符，用于容错比较。"""
+    return _EQUIPMENT_NAME_PUNCTUATION_PATTERN.sub('', name or '')
+
+
 def _match_equipment_name(ocr_name, priority):
-    """用双向包含匹配装备名，返回配置中的标准名称及优先级下标。"""
+    """用双向包含匹配装备名（比较前做标点符号归一化），
+    返回配置中的标准名称及优先级下标。"""
     if not ocr_name:
+        return None, None
+    normalized_ocr_name = _normalize_equipment_name(ocr_name)
+    if not normalized_ocr_name:
         return None, None
     for index, config_name in enumerate(priority):
         if not config_name:
             continue
-        if ocr_name in config_name or config_name in ocr_name:
+        normalized_config_name = _normalize_equipment_name(config_name)
+        if not normalized_config_name:
+            continue
+        if (
+            normalized_ocr_name in normalized_config_name
+            or normalized_config_name in normalized_ocr_name
+        ):
             return config_name, index
     return None, None
 
@@ -2355,16 +2543,51 @@ def _should_install_equipment(task, current_name, current_quality, new_equipment
     )
 
 
+def _equipment_slot_by_dictionary(ocr_name):
+    """按装备词典用双向包含匹配 OCR 名称（比较前做标点符号归一化），
+    返回词典记录的装备下标；未收录该装备或未标注装备时返回 None。"""
+    if not ocr_name:
+        return None
+    normalized_ocr_name = _normalize_equipment_name(ocr_name)
+    if not normalized_ocr_name:
+        return None
+    by_name = _load_equipment_dictionary()["by_name"]
+    for dict_name, entry in by_name.items():
+        if entry["slot"] is None:
+            continue
+        normalized_dict_name = _normalize_equipment_name(dict_name)
+        if not normalized_dict_name:
+            continue
+        if (
+            normalized_ocr_name in normalized_dict_name
+            or normalized_dict_name in normalized_ocr_name
+        ):
+            return entry["slot"]
+    return None
+
+
 def _equipment_info(task: TriggerTask, name_region, type_region, description_region):
-    """从指定区域读取装备名称、类型和描述，并解析槽位、品质与配置优先级。"""
+    """从指定区域读取装备名称、类型和描述，并解析槽位、品质与配置优先级。
+
+    装备判定优先查装备词典（按名称直接确定，不受OCR类型文本漏识别影响），
+    词典未收录该装备时才回退到原有的“类型文本”识别逻辑。
+    """
     ocr_name = _get_region_text(task, name_region).strip()
     type_text = _get_region_text(task, type_region).strip()
     description = _get_region_text(task, description_region).strip()
-    if not ocr_name or not type_text:
+    if not ocr_name:
         return None
-    slot = _equipment_slot(task, type_text)
-    if slot is None:
-        return None
+
+    slot = _equipment_slot_by_dictionary(ocr_name)
+    if slot is not None:
+        task.log_info(f"待选装备「{ocr_name}」命中装备词典，装备={slot + 1}号位")
+    else:
+        if not type_text:
+            return None
+        slot = _equipment_slot(task, type_text)
+        if slot is None:
+            return None
+
     priority = _equipment_priority(task, slot)
     canonical_name, rank = _match_equipment_name(ocr_name, priority)
     quality, quality_rgb = _equipment_quality_at(task, (0.117, 0.409))
@@ -2458,6 +2681,17 @@ def _find_target_member_index(
     return target_member_index
 
 
+def _find_refine_box(task: TriggerTask):
+    """安装装备页面右下角的"提炼"按钮（把装备分解成信用点）。"""
+    return next(
+        (b for b in task.all_texts
+         if 0.522 <= (b.x + b.width / 2) / task.width <= 0.999
+         and 0.879 <= (b.y + b.height / 2) / task.height <= 0.996
+         and "提炼" in b.name),
+        None
+    )
+
+
 def handle_equipment(task: TriggerTask):
     """装备选择/安装界面: 按装备位优先级选择，并维护目标主战员的装备状态。"""
     title = find_box_at_point(task, 0.499, 0.126)
@@ -2511,6 +2745,21 @@ def handle_equipment(task: TriggerTask):
                 task.sleep(1)
                 return True
 
+            if _get_config_value(task, "刷装备刻印", False):
+                credit_floor = _get_config_value(task, "刷装备刻印信用点下限", 0)
+                try:
+                    credit_floor = int(credit_floor)
+                except (TypeError, ValueError):
+                    credit_floor = 0
+                if credit_floor > 0 and current_credit < credit_floor:
+                    task.log_info(
+                        f"刷装备刻印: 当前信用点{current_credit}低于下限{credit_floor}，"
+                        "跳过本次购买评估，点击「取消」"
+                    )
+                    task.click_box(cancel_box)
+                    task.sleep(1)
+                    return True
+
         bottom_buttons = [
             box for box in task.all_texts
             if 0.563 <= (box.x + box.width / 2) / task.width <= 0.998
@@ -2561,6 +2810,26 @@ def handle_equipment(task: TriggerTask):
         current_quality = equipment["qualities"][slot]
         should_install_first = False
         install_reason = "未找到目标主战员"
+        # 本次点开的是商店商品时，取 handle_shop 记录的角标信息，用于区分
+        # "候选没有刻印"与"候选自带的非目标刻印"；非商店来源（白拿装备）
+        # 拿不到角标，只能用详情页描述里的刻印图标兜底。
+        candidate_has_engraving = None
+        if is_purchase_page:
+            candidate_has_engraving = (
+                getattr(task, "node_status", None) or {}
+            ).get("shop_opened_has_engraving")
+        # 免费获得的装备没有商店角标可用，用详情页描述里的刻印图标兜底：
+        # 图标命中就说明候选自带刻印，不能按"不带刻印可继承"放行。
+        merged_has_engraving = resolve_candidate_engraving_flag(
+            candidate_has_engraving, equipment_desc,
+        )
+        if merged_has_engraving and candidate_has_engraving is not True:
+            task.log_info(
+                "待选装备描述里检测到刻印图标，判定为自带刻印"
+                f"（角标信息={candidate_has_engraving}）"
+            )
+        candidate_has_engraving = merged_has_engraving
+        engraving_keywords = _get_card_list(task, "装备刻印优先级")
         if preferred_member_index is not None:
             live_qualities = _member_equipment_qualities(
                 task, lv_texts[preferred_member_index]
@@ -2579,31 +2848,62 @@ def handle_equipment(task: TriggerTask):
                     equipment["descriptions"][equipment_slot] = ""
             current_name, _ = _current_equipment_for_slot(task, equipment, slot)
             current_quality = equipment["qualities"][slot]
-            should_install_first, install_reason = _should_install_equipment(
-                task,
-                current_name,
-                current_quality,
-                new_equipment,
-            )
-            has_legendary_in_other_slot = any(
-                quality == "传说" and equipment_slot != slot
-                for equipment_slot, quality in enumerate(live_qualities)
-            )
-            if (
-                new_equipment["quality"] == "传说"
-                and has_legendary_in_other_slot
-            ):
-                should_install_first = False
-                install_reason = "该主战员其他装备位已有传说装备"
-                task.log_info(
-                    "目标主战员已安装传说装备，新传说装备改由其他主战员安装"
+
+            if _get_config_value(task, "刷装备刻印", False):
+                # 刷装备刻印模式：整体切换判断标准为"是否推进目标名+目标刻印进展"，
+                # 不再使用装备优先级+品质比较，也不做传说装备互斥判断。
+                current_description = equipment["descriptions"][slot]
+                should_install_first, install_reason = should_assign_to_target_member(
+                    current_name,
+                    current_description,
+                    new_equipment["name"],
+                    equipment_desc,
+                    new_equipment["priority"],
+                    engraving_keywords,
+                    candidate_has_engraving,
                 )
+            else:
+                should_install_first, install_reason = _should_install_equipment(
+                    task,
+                    current_name,
+                    current_quality,
+                    new_equipment,
+                )
+                has_legendary_in_other_slot = any(
+                    quality == "传说" and equipment_slot != slot
+                    for equipment_slot, quality in enumerate(live_qualities)
+                )
+                if (
+                    new_equipment["quality"] == "传说"
+                    and has_legendary_in_other_slot
+                ):
+                    should_install_first = False
+                    install_reason = "该主战员其他装备位已有传说装备"
+                    task.log_info(
+                        "目标主战员已安装传说装备，新传说装备改由其他主战员安装"
+                    )
 
         if should_install_first and preferred_member_index is not None:
             chosen = lv_texts[preferred_member_index]
             if not tracks_target_member or target_member_index is not None:
                 equipment["names"][slot] = new_equipment["name"]
-                equipment["descriptions"][slot] = equipment_desc
+                # 候选不带刻印时，覆盖后槽位原刻印会被继承下来（见
+                # utils_equipment_engraving 模块头部第 5 条），所以描述要继续
+                # 保留原刻印文字，不能直接换成候选描述，否则后面会把该槽位
+                # 误判成"没有刻印"，再买一件更差的刻印把继承来的刻印顶掉。
+                recorded_description = resolve_slot_description_after_install(
+                    equipment["descriptions"][slot],
+                    equipment_desc,
+                    engraving_keywords,
+                    candidate_has_engraving,
+                )
+                if recorded_description != equipment_desc:
+                    task.log_info(
+                        f"{slot + 1}号位装备「{new_equipment['name']}」不带刻印，"
+                        "覆盖后继承该槽位原有刻印，槽位描述继续记录为"
+                        f"「{recorded_description}」"
+                    )
+                equipment["descriptions"][slot] = recorded_description
                 equipment["qualities"][slot] = new_equipment["quality"] or ""
             member_label = (
                 "刷存档主战员"
@@ -2626,6 +2926,43 @@ def handle_equipment(task: TriggerTask):
                 task.sleep(1)
                 return True
             return False
+
+        engraving_mode = _get_config_value(task, "刷装备刻印", False)
+        if is_purchase_page and engraving_mode:
+            task.log_info(
+                f"刷装备刻印: {slot + 1}号位装备「{new_equipment['name']}」"
+                f"不满足刻印进展，原因={install_reason}，放弃购买，点击「取消」"
+            )
+            # 记录本次货架周期内已判定不满足刻印的装备名，避免下次进商店
+            # 时重新点开同一件装备，导致扫描卡在货架前排、后面商品永远
+            # 没机会被检查。用 handle_shop 里读取到的原始 OCR 名称
+            # （new_equipment["ocr_name"]）匹配，与货架上的文本口径一致。
+            _mark_shop_engraving_rejected(task, new_equipment["ocr_name"])
+            task.click_box(cancel_box)
+            task.sleep(1)
+            return True
+
+        # 刻印专业模式：免费获得（非商店购买）的装备只要不能推进"目标名+
+        # 目标刻印"的进展，就直接提炼（分解）成信用点，不再转交给其他主战员
+        # 占掉装备位——装到别人身上就再也拿不回来了。
+        if should_refine_free_equipment(
+            is_purchase_page=is_purchase_page,
+            engraving_mode=engraving_mode,
+            pro_mode=_get_config_value(task, "刻印专业模式", False),
+            slot_evaluated=preferred_member_index is not None,
+            assign_to_target_member=should_install_first,
+        ):
+            refine_box = _find_refine_box(task)
+            if refine_box:
+                task.log_info(
+                    f"刻印专业模式: 免费获得的{slot + 1}号位装备"
+                    f"「{new_equipment['name']}」不能推进刻印进展，"
+                    f"原因={install_reason}，直接点击提炼换成信用点"
+                )
+                task.click_box(refine_box)
+                task.sleep(1)
+                return True
+            task.log_info("刻印专业模式: 未找到提炼按钮，回退到原分配逻辑")
 
         other_members = [
             level_box for index, level_box in enumerate(lv_texts)
@@ -2659,13 +2996,7 @@ def handle_equipment(task: TriggerTask):
             task.sleep(1)
             return True
 
-        refine_box = next(
-            (b for b in task.all_texts
-             if 0.522 <= (b.x + b.width / 2) / task.width <= 0.999
-             and 0.879 <= (b.y + b.height / 2) / task.height <= 0.996
-             and "提炼" in b.name),
-            None
-        )
+        refine_box = _find_refine_box(task)
         if refine_box:
             task.log_info(f"{slot + 1}号位无需替换且没有其他主战员可选，点击提炼")
             task.click_box(refine_box)
@@ -3001,7 +3332,9 @@ def handle_remove(task: TriggerTask):
                 1,
                 getattr(task, "_pending_removed_card_count", 0),
             )
-            _record_removed_cards(task, removed_count)
+            _record_removed_cards(
+                task, removed_count, from_shop=_consume_pending_shop_removal(task),
+            )
             task._pending_removed_card_count = 0
             task.sleep(1)
             return True
@@ -3030,7 +3363,9 @@ def handle_three_choice_card_remove(task: TriggerTask):
 
     task.log_info("检测到三选一卡牌移除页面，点击移除")
     task.click_box(remove_box)
-    _record_removed_cards(task, 1)
+    _record_removed_cards(
+        task, 1, from_shop=_consume_pending_shop_removal(task),
+    )
     task._pending_removed_card_count = 0
     return True
 
@@ -3337,6 +3672,172 @@ def handle_event_task(task: TriggerTask):
     return True
 
 
+# 运行中页面右上角"退出"按钮的固定坐标（与 `_finish_only_first_layer` 退出
+# 第一层用的是同一个位置）。
+RUN_EXIT_FALLBACK_X = 0.959
+RUN_EXIT_FALLBACK_Y = 0.050
+# 固定坐标框的半宽/半高（归一化）。只用来给 click_box 一个"点"，大小不影响点击
+# 位置（click_box 点的是框中心）。
+RUN_EXIT_FALLBACK_HALF = 0.02
+
+
+def _find_run_exit_box(task: TriggerTask):
+    """运行中页面右上角的"退出"按钮（点击后弹出「逃脱」确认弹窗）。
+
+    优先用 OCR 在右上角找「退出/逃脱/撤退」文本，找不到就回退到右上角**固定
+    坐标**（与 `_finish_only_first_layer` 退出第一层用的是同一个位置）。
+
+    固定坐标兜底不要求该处已经识别出文本：过渡帧中右上角尚未渲染时，
+    `find_box_at_point` 可能返回 None，调用方会误判为没有退出按钮并继续
+    进入Boss；直接返回固定坐标框可以避免这种误判。
+    """
+    region = (0.900, 0.005, 0.998, 0.095)
+    box = next(
+        (
+            text_box for text_box in task.all_texts
+            if region[0] <= (text_box.x + text_box.width / 2) / task.width <= region[2]
+            and region[1] <= (text_box.y + text_box.height / 2) / task.height <= region[3]
+            and (
+                "退出" in text_box.name
+                or _get_game_text(task, "逃脱") in text_box.name
+                or "撤退" in text_box.name
+            )
+        ),
+        None,
+    )
+    if box:
+        return box
+    task.log_info(
+        f"右上角未识别到「退出」文本，回退到固定坐标"
+        f"({RUN_EXIT_FALLBACK_X:.3f}, {RUN_EXIT_FALLBACK_Y:.3f})点击「退出」"
+    )
+    return task.box_of_screen(
+        RUN_EXIT_FALLBACK_X - RUN_EXIT_FALLBACK_HALF,
+        RUN_EXIT_FALLBACK_Y - RUN_EXIT_FALLBACK_HALF,
+        RUN_EXIT_FALLBACK_X + RUN_EXIT_FALLBACK_HALF,
+        RUN_EXIT_FALLBACK_Y + RUN_EXIT_FALLBACK_HALF,
+        name="退出",
+    )
+
+
+def _target_equipment_snapshot(task: TriggerTask):
+    """读取三个装备位的当前状态并判断目标装备是否全部达标。
+
+    Returns:
+        (bool, list[str]): (是否全部达标, 未达标装备位的说明列表)
+    """
+    equipment = _equipment_state(task)
+    descriptions = equipment.get("descriptions") or []
+    current_states = []
+    target_names_per_slot = []
+    for slot in range(3):
+        name, _ = _current_equipment_for_slot(task, equipment, slot)
+        description = descriptions[slot] if slot < len(descriptions) else ""
+        current_states.append((name, description or ""))
+        target_names_per_slot.append(_equipment_priority(task, slot))
+    completed, missing = slots_all_completed(
+        current_states,
+        target_names_per_slot,
+        _get_card_list(task, "装备刻印优先级"),
+    )
+    return completed, missing
+
+
+def _pause_for_manual_review():
+    """不达标又找不到退出按钮时暂停整个执行器，把画面交给人工处理。
+
+    用的是和"第几层boss前自动暂停"同一套暂停机制（`og.executor.pause()`），
+    这里只负责发暂停请求。抽成独立函数是为了让"该不该暂停"这层判断能脱离 ok
+    环境做单元测试（测试里 patch 掉本函数即可）。
+    """
+    from ok import og
+    og.executor.pause()
+
+
+def _maybe_escape_for_engraving_pro_mode(task: TriggerTask, is_final_boss: bool):
+    """刻印专业模式：第二个Boss房间前检查装备/刻印，达标停止程序，不达标退出重刷。
+
+    检查点固定为「第二个Boss房间前」（见 `is_pro_mode_escape_check_point`）：
+    只有当路线页面上已经没有普通节点、即将进入第二个Boss（地图二的关底Boss）
+    时才检查。此时地图二的所有节点（包括商店）都已经走完、商店里的装备也已经
+    全部选完，再判断本局值不值得继续打第二个Boss。达标标准是目标主战员三个
+    装备位全部拿到「目标名+任意一项目标刻印」，具体判定见 `slots_all_completed`。
+
+    达标时**不进入最后的Boss房间**：立即停止任务并把画面留给人工检查；不达标则点击
+    右上角「退出」，由 `handle_escape` 点「逃脱」后重开一局。连「退出」按钮都拿不到
+    时（`_find_run_exit_box` 已做固定坐标兜底，正常不会发生）同样改为暂停等人工处理，
+    时同样暂停等待人工处理，不会直接进入Boss把本局打完。
+
+    Args:
+        is_final_boss: 当前路线页面是否只剩下最终Boss节点（没有识别到任何
+            普通节点）。
+
+    Returns:
+        bool: True 表示本帧路线页面处理结束（已经停止程序、点击「退出」开始
+            逃脱，或者暂停等待人工处理）。
+    """
+    if not _get_config_value(task, "刻印专业模式", False):
+        return False
+    if not _get_config_value(task, "刷装备刻印", False):
+        return False
+    node_status = getattr(task, "node_status", None)
+    if node_status is None:
+        return False
+
+    layer_index = node_status.get("pass_final_boss_count", 0)
+    if not is_pro_mode_escape_check_point(layer_index, is_final_boss):
+        return False
+
+    # 同一个检查点只判定/点击一次，避免"退出"没生效时每帧反复点击同一位置。
+    check_point = f"第二个Boss房间前@第{layer_index + 1}层"
+
+    # 不达标且找不到退出按钮时进入兜底暂停：画面留在最终Boss房间前，脚本不能
+    # 往下走"点击进入Boss"的分支。debug 模式下暂停不会阻塞任务线程（逐帧逻辑
+    # 照常执行），所以必须靠这个标记把本帧一直占住。
+    if node_status.get("pro_mode_review_paused") == check_point:
+        task.sleep(1)
+        return True
+
+    if node_status.get("pro_mode_escape_checked") == check_point:
+        return False
+    node_status["pro_mode_escape_checked"] = check_point
+
+    completed, missing = _target_equipment_snapshot(task)
+    # 达标时不去找「退出」按钮：既不点退出，也不点进入Boss。
+    exit_box = None if completed else _find_run_exit_box(task)
+    action = decide_pro_mode_check_point_action(completed, exit_box is not None)
+    if action == PRO_MODE_ACTION_STOP_FOR_REVIEW:
+        # 达标即认为本局已刷出指定存档，停止自动化，保留当前画面供人工检查。
+        task.log_info(
+            f"刻印专业模式: 检查点[{check_point}]三个装备位均已达标，"
+            "已刷出指定存档，停止程序"
+        )
+        task.disable()
+        return True
+
+    if action == PRO_MODE_ACTION_ESCAPE:
+        task.log_info(
+            f"刻印专业模式: 检查点[{check_point}]未达标"
+            f"（{'；'.join(missing)}），点击退出并逃脱，重开一局"
+        )
+        task.click_box(exit_box)
+        task.sleep(1)
+        return True
+
+    # action == PRO_MODE_ACTION_PAUSE_NO_EXIT：兜底，正常走不到（`_find_run_exit_box`
+    # 已经改成固定坐标，正常一定给得出框）。若仍走到这里，则暂停等待人工处理，
+    # 并用 pro_mode_review_paused 占住本帧，避免后续"检测到最终boss节点，
+    # 点击进入"分支执行。
+    node_status["pro_mode_review_paused"] = check_point
+    task.log_info(
+        f"刻印专业模式: 检查点[{check_point}]未达标"
+        f"（{'；'.join(missing)}），且未找到「退出」按钮，暂停程序等待人工处理"
+    )
+    _pause_for_manual_review()
+    task.sleep(5)
+    return True
+
+
 def handle_route_selection(task: TriggerTask):
     """路线选择页面: 识别节点类型，按优先级排序后依次点击所有节点，每次间隔1秒。
     同时负责节点计数：离开路线页面时 node_count +1。"""
@@ -3389,10 +3890,18 @@ def handle_route_selection(task: TriggerTask):
 
     # 找不到任何普通节点类型特征时，当前路线节点即为boss。
     if not nodes:
-        task.log_info("检测到最终boss节点，点击进入")
         if hasattr(task, 'node_status'):
             task.node_status['reach_final_boss'] = True
             task.node_status['node_type'] = "boss"
+
+        # 刻印专业模式：第二个Boss房间前检查目标主战员的装备与刻印是否达标，
+        # 不达标就直接退出本局（后续由 handle_escape 点击「逃脱」）重刷。放在
+        # 进入Boss、暂停之前，保证「一定要在第二个Boss房间前」完成判断；此时
+        # 地图二的节点（含商店）都已经走完，商店里的装备也已经全部选完。
+        if _maybe_escape_for_engraving_pro_mode(task, is_final_boss=True):
+            return True
+
+        task.log_info("检测到最终boss节点，点击进入")
 
         # 检查"第几层boss前自动暂停"配置
         pause_config = _get_config_value(task, '第几层boss前自动暂停', "不暂停")
@@ -3444,8 +3953,12 @@ def handle_route_selection(task: TriggerTask):
                 f"「{nearest_node['node_type']}」节点"
             )
 
-    priority = _get_route_priority(task)
-    task.log_info(f"路线优先级配置: {priority}")
+    # 第一层/第二层分别取各自的路线优先级配置（0=第一层，>=1=第二层）。
+    layer_index = (getattr(task, "node_status", None) or {}).get(
+        "pass_final_boss_count", 0
+    )
+    priority = _get_route_priority(task, layer_index)
+    task.log_info(f"第{layer_index + 1}层路线优先级配置: {priority}")
     task.log_info(
         f"识别到的路线节点: "
         f"{[(node['node_type'], node['special_features']) for node in nodes]}"
@@ -3453,13 +3966,23 @@ def handle_route_selection(task: TriggerTask):
 
     priority_index = {node_type: index for index, node_type in enumerate(priority)}
 
+    # 优先级列表里写了「商店」时，带商店标志的节点按「商店」在列表里的位置排序；
+    # 没写时商店节点固定最高优先级（不受节点类型顺序影响）。
+    shop_rank = priority_index.get("商店")
+
     def sort_key(node):
-        # 商店节点是固定最高优先级，不受用户配置的节点类型顺序影响。
-        shop_priority = 0 if "shop" in node["special_features"] else 1
+        has_shop = "shop" in node["special_features"]
+        if shop_rank is None:
+            shop_priority = 0 if has_shop else 1
+            type_priority = priority_index.get(node["node_type"], len(priority))
+        else:
+            shop_priority = 1
+            type_priority = (
+                shop_rank if has_shop
+                else priority_index.get(node["node_type"], len(priority))
+            )
         if node["node_type"] == "结算":
             type_priority = len(priority) + 1
-        else:
-            type_priority = priority_index.get(node["node_type"], len(priority))
         special_priority = min(
             (special_feature_priorities[name] for name in node["special_features"]),
             default=0,
@@ -3728,42 +4251,389 @@ def handle_rest(task: TriggerTask):
     return False
 
 
+def _shop_engraving_rejected_names(task: TriggerTask):
+    """获取本次货架周期内已判定"不满足刻印进展"的装备名集合（已做标点符号
+    归一化，避免货架列表页和购买详情页两次OCR识别的标点差异导致漏判）。
+
+    货架刷新（免费或花费信用点）之后要调用 `_clear_shop_engraving_rejected`
+    清空这个记录，否则同名的新装备也会被误跳过。
+    """
+    node_status = getattr(task, "node_status", None)
+    if node_status is None:
+        return set()
+    rejected = node_status.get("shop_engraving_rejected_names")
+    if not isinstance(rejected, set):
+        rejected = set()
+        node_status["shop_engraving_rejected_names"] = rejected
+    return rejected
+
+
+def _is_shop_engraving_rejected(task: TriggerTask, item_name):
+    """判断某个装备名（归一化后）是否已在本次货架周期内被判定不满足刻印。"""
+    normalized_name = _normalize_equipment_name(item_name)
+    if not normalized_name:
+        return False
+    return normalized_name in _shop_engraving_rejected_names(task)
+
+
+def _mark_shop_engraving_rejected(task: TriggerTask, item_name):
+    """记录某件装备（归一化后）本次货架周期内已被判定为不满足刻印进展，
+    避免重复点开。"""
+    normalized_name = _normalize_equipment_name(item_name)
+    if normalized_name:
+        _shop_engraving_rejected_names(task).add(normalized_name)
+
+
+def _clear_shop_engraving_rejected(task: TriggerTask):
+    """货架刷新后清空刻印黑名单，让新一轮商品重新参与评估。"""
+    node_status = getattr(task, "node_status", None)
+    if node_status is not None:
+        node_status["shop_engraving_rejected_names"] = set()
+
+
+# ── 商店刻印角标检测 ───────────────────────────────────────────
+
+_engraving_badge_templates = None
+# 角标模板取同一分辨率（1600x900）下的游戏图标，正常角标匹配分数通常
+# 高于 0.9；0.75 过低，装备图标自身的美术图案也可能过线。每个商品格子
+# 取模板匹配最高置信度。
+_ENGRAVING_BADGE_THRESHOLD = 0.85
+
+# 角标的"边界区间"下沿。低于阈值但达到该分数的格子不能直接判定为
+# "确定没有角标"；这些格子交给详情页描述判定，避免误跳过真实刻印装备。
+_ENGRAVING_BADGE_BORDERLINE_FLOOR = 0.80
+
+
+# 一次货架角标检测的结果。
+# - engraved_indexes: 命中（置信度 >= 阈值）的信用点图标索引集合；
+# - badge_count: 命中数，调用方用它判断"本货架有没有刻印装备"；
+# - borderline_confidences: {索引: 置信度}，落在边界区间（>= 下沿且 < 阈值）
+#   的格子，调用方对这些商品不跳过、改成进详情页看描述。
+ShopBadgeDetection = namedtuple(
+    "ShopBadgeDetection",
+    ["engraved_indexes", "badge_count", "borderline_confidences"],
+)
+
+
+def _short_template_name(template_name):
+    """模板文件名转成短标签（engraving_badge_light.png -> light）。"""
+    stem = str(template_name).replace("\\", "/").rsplit("/", 1)[-1]
+    stem = stem.rsplit(".", 1)[0]
+    return stem.replace("engraving_badge_", "") or stem
+
+
+def _load_engraving_badge_templates():
+    """懒加载刻印角标模板图片（光/暗各一张），全局缓存只读一次磁盘。
+
+    模板来源：tests/images 中的刻印图标小图，已裁切到 assets/images 下。
+    模板分辨率与 1600x900 游戏截图一致，运行时通过多尺度匹配适配其他分辨率。
+    """
+    global _engraving_badge_templates
+    if _engraving_badge_templates is not None:
+        return _engraving_badge_templates
+    _engraving_badge_templates = []
+    assets_dir = os.path.join("ok_tasks", "assets", "images")
+    for name in ("engraving_badge_light.png", "engraving_badge_dark.png"):
+        path = os.path.join(assets_dir, name)
+        data = np.fromfile(path, dtype=np.uint8)
+        if data is None or data.size == 0:
+            print(f"[刻印角标] 模板加载失败: {path}")
+            continue
+        img = cv2.imdecode(data, cv2.IMREAD_COLOR)
+        if img is None:
+            print(f"[刻印角标] 模板解码失败: {path}")
+            continue
+        _engraving_badge_templates.append((name, img))
+    return _engraving_badge_templates
+
+
+# 商品格子的取点（相对该商品信用点图标中心的归一化偏移）。
+#
+# 信用点图标在商品格子左下的价格行，商品图标与名称都在它上方，角标只会画在
+# 商品图标范围内，所以角标只在本商品的格子里找，格子外的匹配一律不采信。
+# 只在商品自己的格子内匹配，避免全货架匹配后按最近信用点图标归属时，
+# 将相邻商品或其他图案误算到当前商品。
+_SHOP_CELL_LEFT = 0.030
+_SHOP_CELL_RIGHT = 0.150
+_SHOP_CELL_TOP = 0.360
+_SHOP_CELL_BOTTOM_GAP = 0.020
+
+
+def _shop_icon_center(width, height, credit_icon):
+    """某个商品信用点图标的中心（归一化坐标）。"""
+    return (
+        (credit_icon.x + credit_icon.width / 2) / width,
+        (credit_icon.y + credit_icon.height / 2) / height,
+    )
+
+
+def _shop_product_cell(width, height, credit_icon):
+    """商品格子区域（归一化 x0, y0, x1, y1），以该商品的信用点图标为锚点推出。"""
+    icon_x, icon_y = _shop_icon_center(width, height, credit_icon)
+    return (
+        max(0.0, icon_x - _SHOP_CELL_LEFT),
+        max(0.0, icon_y - _SHOP_CELL_TOP),
+        min(1.0, icon_x + _SHOP_CELL_RIGHT),
+        min(1.0, icon_y - _SHOP_CELL_BOTTOM_GAP),
+    )
+
+
+def _shop_item_name_region(width, height, credit_icon):
+    """商品名称的读取区域（归一化 x0, y0, x1, y1）。
+
+    与商品格子共用同一个锚点（信用点图标中心），保证两处取的是同一个位置。
+    """
+    icon_x, icon_y = _shop_icon_center(width, height, credit_icon)
+    return (
+        max(0.0, icon_x - 0.013),
+        max(0.0, icon_y - 0.247),
+        min(1.0, icon_x + 0.120),
+        min(1.0, icon_y - 0.105),
+    )
+
+
+def _detect_shop_engraving_badges(task, credit_icons):
+    """检测商店货架上的刻印角标，按"商品格子"归属到商品索引。
+
+    只在"刷装备刻印"模式开启时调用。模板匹配识别装备图标上的刻印角标
+    （光/暗两种），每个商品只在自己的格子里取最高置信度，超过
+    _ENGRAVING_BADGE_THRESHOLD 才算命中。
+
+    判定按商品格子归属：先用每个商品的信用点图标推出它的格子，再在格子内
+    取最高置信度；落在格子外的匹配一律不采信，避免相邻商品之间串位。
+
+    Args:
+        task: 任务对象，需要 frame / width / height。
+        credit_icons: 货架上各商品的信用点图标（find_feature("credit_icon")）。
+    返回值:
+        ShopBadgeDetection:
+        - engraved_indexes: set[int]，有角标命中的信用点图标索引
+        - badge_count: int，命中的角标数（用于判断检测是否有效）
+        - borderline_confidences: dict[int, float]，落在边界区间的格子
+
+    调用方把 badge_count == 0 当作"本货架没有刻印装备"来用：没有角标就整排
+    跳过，不再回退到"逐一进详情页检查"。唯一例外是 borderline_confidences
+    里的商品：分数紧贴阈值，不能确认它到底有没有角标，这些商品交给
+    购买页的描述判定，避免把真实的刻印装备当成"没有角标"漏掉。
+    """
+    templates = _load_engraving_badge_templates()
+    if not templates:
+        return ShopBadgeDetection(set(), 0, {})
+    frame = task.frame
+    if frame is None:
+        return ShopBadgeDetection(set(), 0, {})
+
+    h, w = frame.shape[:2]
+    # 只在商店商品区域内搜索，排除顶部标题栏和底部刷新按钮
+    y1, y2 = int(0.35 * h), int(0.85 * h)
+    y1_start = y1
+    search_area = frame[y1:y2, :]
+
+    cells = []
+    for index, credit_icon in enumerate(credit_icons or []):
+        x0, y0, x1, y1_box = _shop_product_cell(w, h, credit_icon)
+        cells.append({
+            "index": index,
+            "box": (x0 * w, y0 * h, x1 * w, y1_box * h),
+            "best": None,
+        })
+    if not cells:
+        return ShopBadgeDetection(set(), 0, {})
+
+    # 多尺度模板匹配，适配不同游戏分辨率；每个格子只保留最高分。
+    for _, tpl in templates:
+        for scale in (0.8, 0.9, 1.0, 1.1, 1.2, 1.3):
+            th, tw = tpl.shape[:2]
+            new_w = max(1, int(tw * scale))
+            new_h = max(1, int(th * scale))
+            scaled = cv2.resize(tpl, (new_w, new_h))
+            if scaled.shape[0] > search_area.shape[0] or scaled.shape[1] > search_area.shape[1]:
+                continue
+            result = cv2.matchTemplate(
+                search_area, scaled, cv2.TM_CCOEFF_NORMED,
+            )
+            for cell in cells:
+                x0, y0, x1, y1_box = cell["box"]
+                col0 = max(0, int(x0))
+                col1 = min(result.shape[1], int(x1) + 1)
+                row0 = max(0, int(y0) - y1_start)
+                row1 = min(result.shape[0], int(y1_box) - y1_start + 1)
+                if row0 >= row1 or col0 >= col1:
+                    continue
+                patch = result[row0:row1, col0:col1]
+                local = np.unravel_index(int(np.argmax(patch)), patch.shape)
+                confidence = float(patch[local])
+                best = cell["best"]
+                if best is not None and confidence <= best:
+                    continue
+                cell["best"] = confidence
+
+    engraved_indexes = set()
+    borderline_confidences = {}
+    for cell in sorted(cells, key=lambda item: item["index"]):
+        best = cell["best"]
+        confidence = best if best is not None else 0.0
+        if best is None:
+            continue
+        if confidence >= _ENGRAVING_BADGE_THRESHOLD:
+            engraved_indexes.add(cell["index"])
+        elif confidence >= _ENGRAVING_BADGE_BORDERLINE_FLOOR:
+            # 存 4 位小数，避免 float32 尾数造成无意义的配置抖动。
+            borderline_confidences[cell["index"]] = round(confidence, 4)
+
+    return ShopBadgeDetection(
+        engraved_indexes, len(engraved_indexes), borderline_confidences,
+    )
+
+
+def _shop_removal_credit_floor(task: TriggerTask) -> int:
+    """「商店删卡信用点下限」配置值（0 表示专业模式下不删卡）。"""
+    floor = _get_config_value(task, "商店删卡信用点下限", 0)
+    try:
+        return int(floor)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _shop_removal_block_reason(task: TriggerTask) -> str:
+    """刻印专业模式拦下德朗商店删卡的原因；返回空串表示允许删卡。
+
+    专业模式依附于「刷装备刻印」：两个开关都打开时，只有当前信用点**超过**
+    「商店删卡信用点下限」才允许花信用点删卡；下限为 0（默认）时专业模式下
+    本局完全不删卡，避免把信用点花在删卡上、影响刷刻印装备。信用点
+    读不到（OCR 失败按 0 处理）时同样按不删卡处理，避免误花信用点。
+    """
+    if not (
+        _get_config_value(task, "刷装备刻印", False)
+        and _get_config_value(task, "刻印专业模式", False)
+    ):
+        return ""
+    floor = _shop_removal_credit_floor(task)
+    if floor <= 0:
+        return "刻印专业模式已开启，且未配置「商店删卡信用点下限」（0 表示不删卡）"
+    current_credit = _get_current_credit(task)
+    if current_credit <= floor:
+        return (
+            f"刻印专业模式下当前信用点{current_credit}"
+            f"未超过「商店删卡信用点下限」{floor}"
+        )
+    return ""
+
+
+def _shop_removal_disabled_by_pro_mode(task: TriggerTask) -> bool:
+    """刻印专业模式下德朗商店的「移除卡牌」是否被拦下（原因见 block_reason）。"""
+    return bool(_shop_removal_block_reason(task))
+
+
+# 非专业模式下商店删卡的固定上限。
+SHOP_REMOVE_CARD_LIMIT = 5
+# 刻印专业模式下「商店删卡次数上限」的默认值（配置缺项/非数字时的兜底）。
+SHOP_REMOVE_CARD_LIMIT_PRO_MODE_DEFAULT = 2
+
+
+def _shop_removal_limit(task: TriggerTask) -> int:
+    """本局允许在德朗商店花信用点删卡的次数上限。
+
+    非专业模式沿用固定上限 `SHOP_REMOVE_CARD_LIMIT`（5 张）；「刷装备刻印」
+    与「刻印专业模式」都开启时改用「商店删卡次数上限」配置（默认 2，0 表示完全
+    不删卡），避免专业模式把信用点都花在删卡上、影响刷刻印装备。
+
+    计数只看商店删卡数（`node_status['shop_removed_card_count']`），事件/三选一里
+    删掉的卡牌计入的是 `node_status['removed_card_count']`，不占用商店额度。
+    """
+    if not (
+        _get_config_value(task, "刷装备刻印", False)
+        and _get_config_value(task, "刻印专业模式", False)
+    ):
+        return SHOP_REMOVE_CARD_LIMIT
+    limit = _get_config_value(
+        task, "商店删卡次数上限", SHOP_REMOVE_CARD_LIMIT_PRO_MODE_DEFAULT,
+    )
+    try:
+        return max(0, int(limit))
+    except (TypeError, ValueError):
+        return SHOP_REMOVE_CARD_LIMIT_PRO_MODE_DEFAULT
+
+
+def _try_remove_shop_card(task: TriggerTask, box):
+    """德朗商店: 花信用点移除一张卡牌，真的点了移除返回 True。
+
+    从 handle_shop 里抽出来，方便"刻印模式下降级为低优先级动作"时复用：
+    刻印模式下必须等货架上的刻印装备都检查完之后，才轮到这个删卡动作。
+    """
+    current_credit = _get_current_credit(task)
+    shop_removed_card_count = task.node_status.get("shop_removed_card_count", 0)
+    task.log_info(f"handle_shop: 当前信用点={current_credit}")
+    cost_box = find_box_at_point(task, 0.724, 0.319)
+    task.log_info(f"handle_shop: 0.724,0.319处费用文本='{cost_box.name if cost_box else None}'")
+    clicked = False
+    if cost_box and cost_box.name.isdigit():
+        cost = int(cost_box.name)
+        remove_limit = _shop_removal_limit(task)
+        if shop_removed_card_count >= remove_limit:
+            task.log_info(
+                f"本局已在商店移除{shop_removed_card_count}张卡牌，"
+                f"达到商店删卡上限{remove_limit}，不再使用信用点移除卡牌"
+            )
+        elif cost <= current_credit and task.node_status['shop'] is True:
+            task.log_info(f"德朗商店: 移除卡牌需{cost}信用点，当前{current_credit}，足够，点击移除")
+            task.click_box(box)
+            task.sleep(1)
+            # 点开删卡页还不算删掉：真正的"移除"由 handle_remove 完成，这里先
+            # 打标记，那次删除才计入 node_status['shop_removed_card_count']。
+            _mark_pending_shop_removal(task)
+            clicked = True
+        else:
+            task.log_info(f"德朗商店: 移除卡牌需{cost}信用点，当前{current_credit}，不足，继续挑选其他商品")
+    else:
+        task.log_info("handle_shop: 移除卡牌费用读取失败，继续挑选其他商品")
+    task.node_status['shop'] = False
+    return clicked
+
+
 def handle_shop(task: TriggerTask):
-    """德朗商店: 优先移除卡牌，其次按配置购买卡牌或装备，最后尝试免费刷新。"""
+    """德朗商店: 刻印模式先找刻印装备，再尝试刷新，最后才移除卡牌。"""
     box = find_box_at_point(task, 0.729, 0.261)
     soldout = find_box_at_point(task, 0.727, 0.286)
     if (box and "移除卡牌" in box.name) or (soldout and "售" in soldout.name):
         task.log_info("handle_shop: 通过页面判定（移除卡牌或售罄）")
+        remove_card_box = box if (box and "移除卡牌" in box.name) else None
         if soldout and "售" in soldout.name:
             task.log_info(f"德朗商店: 移除卡牌已售罄")
             task.node_status['shop'] = False
-        else:
-            current_credit = _get_current_credit(task)
-            removed_card_count = task.node_status.get("removed_card_count", 0)
-            task.log_info(f"handle_shop: 当前信用点={current_credit}")
-            cost_box = find_box_at_point(task, 0.724, 0.319)
-            task.log_info(f"handle_shop: 0.724,0.319处费用文本='{cost_box.name if cost_box else None}'")
-            if cost_box and cost_box.name.isdigit():
-                cost = int(cost_box.name)
-                if removed_card_count >= 5:
-                    task.log_info(
-                        f"本局已移除{removed_card_count}张卡牌，"
-                        "达到5张上限，不再使用信用点移除卡牌"
-                    )
-                elif cost <= current_credit and task.node_status['shop'] is True:
-                    task.log_info(f"德朗商店: 移除卡牌需{cost}信用点，当前{current_credit}，足够，点击移除")
-                    task.click_box(box)
-                    task.sleep(1)
-                    task.node_status['shop'] = False
-                    return True
-                else:
-                    task.log_info(f"德朗商店: 移除卡牌需{cost}信用点，当前{current_credit}，不足，继续挑选其他商品")
-            else:
-                task.log_info("handle_shop: 移除卡牌费用读取失败，继续挑选其他商品")
-            task.node_status['shop'] = False
+            remove_card_box = None
+        # 刻印专业模式：默认禁用商店删卡（花信用点移除卡牌），把删卡入口置空，
+        # 既不点开移除卡牌页面，也不会在函数末尾执行删卡；只有配置了「商店删卡
+        # 信用点下限」且当前信用点超过它时，入口才保留、允许花钱删卡。
+        removal_block_reason = _shop_removal_block_reason(task)
+        if remove_card_box and removal_block_reason:
+            task.log_info(
+                f"德朗商店: {removal_block_reason}，跳过「移除卡牌」"
+            )
+            remove_card_box = None
+
+        # 刻印模式下删卡的优先级要排在"寻找刻印装备"之后：这里先跳过删卡，
+        # 等下面的商品扫描确认货架上没有被判定为值得点开的刻印装备之后，
+        # 再回头执行删卡，避免一进商店就把信用点花在删卡上。
+        defer_remove_card = bool(remove_card_box) and bool(
+            _get_config_value(task, "刷装备刻印", False)
+        )
+        if remove_card_box and not defer_remove_card:
+            if _try_remove_shop_card(task, remove_card_box):
+                return True
 
         current_credit = _get_current_credit(task)
         task.log_info(f"德朗商店挑选商品: 当前信用点={current_credit}")
+        # 购买页用「刷装备刻印信用点下限」作为闸门：信用点低于该值时一律点「取消」。
+        # 这里提前用同一个阈值过滤，避免点开注定被取消的装备，否则会陷入
+        # 「点开装备 -> 取消 -> 再点开同一件」的死循环。
+        engraving_credit_floor = 0
+        if _get_config_value(task, "刷装备刻印", False):
+            engraving_credit_floor = _get_config_value(task, "刷装备刻印信用点下限", 0)
+            try:
+                engraving_credit_floor = int(engraving_credit_floor)
+            except (TypeError, ValueError):
+                engraving_credit_floor = 0
         credit_icons = sorted(
         task.find_feature(
             feature_name="credit_icon",
@@ -3804,23 +4674,126 @@ def handle_shop(task: TriggerTask):
 
         card_priority = _get_card_reward_priority(task)
         equipment_priorities = [_equipment_priority(task, slot) for slot in range(3)]
+
+        # 刻印模式预筛选：通过角标模板匹配识别哪些商品是刻印装备，
+        # 后续只点击有角标的装备，避免点开无刻印装备浪费时间。
+        # 角标识别已验证可靠，所以"没检测到角标"就等于"本货架没有刻印装备"，
+        # 整排商品直接跳过，不再回退到"逐一进详情页检查"——回退会把没有角标的
+        # 装备也点开，于是"名字对但没有刻印"的装备又会被买走。
+        # 角标预筛选的例外（见 name_only_candidate_slot）：槽位"刻印已经拿到、
+        # 只差目标名"时，能推进它的候选恰恰是一件命中目标名、自身不带刻印的
+        # 装备（同样没有角标）。这里先把三个槽位的当前状态取出来备查。
+        equipment = _equipment_state(task)
+        equipment_names = equipment.get("names", [])
+        equipment_descriptions = equipment.get("descriptions", [])
+        engraving_keywords = _get_card_list(task, "装备刻印优先级")
+        slot_states = [
+            (
+                equipment_names[slot] if slot < len(equipment_names) else "",
+                equipment_descriptions[slot]
+                if slot < len(equipment_descriptions)
+                else "",
+                equipment_priorities[slot],
+            )
+            for slot in range(3)
+        ]
+        engraving_badge_enabled = _get_config_value(task, "刷装备刻印", False)
+        # 商品名称先统一读一遍，下面的商品循环复用这份结果。
+        item_names = [
+            _get_region_text(
+                task, _shop_item_name_region(task.width, task.height, icon),
+            ).strip()
+            for icon in credit_icons
+        ]
+        engraved_indexes = set()
+        borderline_confidences = {}
+        if engraving_badge_enabled and credit_icons:
+            detection = _detect_shop_engraving_badges(task, credit_icons)
+            engraved_indexes = detection.engraved_indexes
+            badge_count = detection.badge_count
+            borderline_confidences = detection.borderline_confidences
+            if badge_count > 0:
+                task.log_info(
+                    f"德朗商店刻印角标检测: 发现{badge_count}个角标，"
+                    f"关联到商品索引={sorted(i + 1 for i in engraved_indexes)}"
+                )
+            elif borderline_confidences:
+                task.log_info(
+                    f"德朗商店刻印角标检测: 未发现达到阈值"
+                    f"（{_ENGRAVING_BADGE_THRESHOLD:.2f}）的角标，但有"
+                    f"{len(borderline_confidences)}件落在边界区间"
+                    f"（{_ENGRAVING_BADGE_BORDERLINE_FLOOR:.2f}"
+                    f"~{_ENGRAVING_BADGE_THRESHOLD:.2f}），"
+                    "这几件进详情页用描述判定，其余商品跳过"
+                )
+            else:
+                task.log_info(
+                    "德朗商店刻印角标检测: 未发现任何角标，"
+                    "本货架没有刻印装备，跳过全部商品"
+                )
+
         for index, credit_icon in enumerate(credit_icons):
             icon_x = (credit_icon.x + credit_icon.width / 2) / task.width
             icon_y = (credit_icon.y + credit_icon.height / 2) / task.height
             price_box = find_box_at_point(task, icon_x + 0.099, icon_y - 0.001)
             price = _parse_discounted_price(price_box.name) if price_box else None
-            item_name = _get_region_text(task, (
-            max(0.0, icon_x - 0.013),
-            max(0.0, icon_y - 0.247),
-            min(1.0, icon_x + 0.120),
-            min(1.0, icon_y - 0.105),
-            )).strip()
+            item_name = item_names[index] if index < len(item_names) else ""
             is_card = index in card_icon_indexes
             item_type = "卡牌" if is_card else "装备"
             task.log_info(f"德朗商店第{index + 1}个商品: 类型={item_type}，名称=「{item_name}」，价格={price}")
             if not item_name or price is None or price >= current_credit:
                 continue
 
+            engraving_mode = (
+                not is_card and _get_config_value(task, "刷装备刻印", False)
+            )
+            if engraving_mode and current_credit < engraving_credit_floor:
+                task.log_info(
+                    f"德朗商店: 装备「{item_name}」价格{price}虽低于当前信用点"
+                    f"{current_credit}，但未达到刷装备刻印下限"
+                    f"{engraving_credit_floor}，购买必被取消，跳过该装备"
+                )
+                continue
+            # 角标预筛选：只有带刻印角标的装备才值得点开详情页评估，
+            # 没有角标的装备一定不是刻印装备，直接跳过。
+            # 例外：槽位"刻印已经拿到、只差目标名"时，能推进它的候选恰恰是一件
+            # 命中目标名、自身不带刻印的装备（同样没有角标），必须放行，否则这个
+            # 槽位永远补不上名字（见 name_only_candidate_slot）。
+            if (
+                engraving_mode
+                and engraving_badge_enabled
+                and index not in engraved_indexes
+            ):
+                name_only_slot = name_only_candidate_slot(
+                    item_name, slot_states, engraving_keywords,
+                )
+                if name_only_slot is None:
+                    borderline_confidence = borderline_confidences.get(index)
+                    if borderline_confidence is None:
+                        task.log_info(
+                            f"德朗商店: 装备「{item_name}」未检测到刻印角标，"
+                            "不是刻印装备，跳过"
+                        )
+                        continue
+                    task.log_info(
+                        f"德朗商店: 装备「{item_name}」角标置信度="
+                        f"{borderline_confidence:.2f} 落在边界区间"
+                        f"（{_ENGRAVING_BADGE_BORDERLINE_FLOOR:.2f}"
+                        f"~{_ENGRAVING_BADGE_THRESHOLD:.2f}），"
+                        "无法确认是否自带刻印，进详情页用描述判定"
+                    )
+                else:
+                    task.log_info(
+                        f"德朗商店: 装备「{item_name}」未检测到刻印角标，但"
+                        f"{name_only_slot + 1}号位刻印已达标、只差目标名，"
+                        "点开详情页确认"
+                    )
+            if engraving_mode and _is_shop_engraving_rejected(task, item_name):
+                task.log_info(
+                    f"德朗商店: 装备「{item_name}」本次货架周期内已判定不满足"
+                    "刻印进展，跳过，继续检查下一个商品"
+                )
+                continue
             if is_card:
                 if _neutral_card_limit_reached(task):
                     neutral_card_count = task.node_status.get(
@@ -3837,6 +4810,11 @@ def handle_shop(task: TriggerTask):
                  if name and (name in item_name or item_name in name)),
                 None,
                 )
+            elif engraving_mode:
+                # 刷装备刻印模式：货架上只能看到名字，看不到刻印描述，
+                # 不能靠名字过滤决定要不要点开；只要买得起就先点进详情页，
+                # 交给 handle_equipment 的购买页逻辑按刻印判定决定购买或取消。
+                matched_name = item_name
             else:
                 matched_name = next(
                 (canonical_name
@@ -3848,26 +4826,133 @@ def handle_shop(task: TriggerTask):
             if not matched_name:
                 continue
 
-            task.log_info(
-            f"德朗商店: {item_type}「{item_name}」命中配置「{matched_name}」，"
-            f"价格{price}小于当前信用点{current_credit}，点击信用点图标"
-            )
+            if engraving_mode:
+                task.log_info(
+                f"德朗商店: {item_type}「{item_name}」（刷装备刻印模式，"
+                f"不按名字过滤），价格{price}小于当前信用点{current_credit}，"
+                "点击信用点图标查看详情"
+                )
+            else:
+                task.log_info(
+                f"德朗商店: {item_type}「{item_name}」命中配置「{matched_name}」，"
+                f"价格{price}小于当前信用点{current_credit}，点击信用点图标"
+                )
+            # 记录本次点开的商品是否带刻印角标：购买页要用它区分
+            # "候选真的没有刻印"与"候选自带非目标刻印"这两种在描述文字上
+            # 无法区分的情况。能点进来就说明角标检测生效了，这里必然是布尔值。
+            node_status = getattr(task, "node_status", None)
+            if node_status is not None:
+                node_status["shop_opened_has_engraving"] = (
+                    index in engraved_indexes if engraving_badge_enabled else None
+                )
             task.click_box(credit_icon)
             task.sleep(1)
             return True
 
+        refresh_region_boxes = [
+            text_box for text_box in task.all_texts
+            if 0.012 <= (text_box.x + text_box.width / 2) / task.width <= 0.258
+            and 0.892 <= (text_box.y + text_box.height / 2) / task.height <= 0.979
+            and text_box.name.strip()
+        ]
         free_box = next(
-        (text_box for text_box in task.all_texts
-         if 0.012 <= (text_box.x + text_box.width / 2) / task.width <= 0.258
-         and 0.892 <= (text_box.y + text_box.height / 2) / task.height <= 0.979
-         and "免费" in text_box.name),
-        None,
+            (text_box for text_box in refresh_region_boxes if "免费" in text_box.name),
+            None,
         )
         if free_box:
             task.log_info("德朗商店没有符合要求的商品，点击「免费」刷新")
             task.click_box(free_box)
             task.sleep(1)
+            _clear_shop_engraving_rejected(task)
             return True
+
+        # 免费刷新次数用完后，该区域会改为显示花费信用点刷新的按钮。
+        # 只有在"刷装备刻印"开启，且当前信用点超过"刷装备刻印信用点下限"
+        # 配置时，才允许花信用点刷新商店，与购买时使用的是同一个阈值配置。
+        if _get_config_value(task, "刷装备刻印", False):
+            # 该区域里同时有「剩余刷新次数」计数（形如 3/3、0/3）和「刷新费用」
+            # 数字（形如 30）。剩余次数为 0 时刷新按钮是灰色的，点了不生效，
+            # 必须放弃刷新、把机会让给后面的「离开商店」；否则本函数会一直返回
+            # True，脚本卡在商店里反复点击同一个灰色按钮，永远走不出商店。
+            remaining_refresh_box = None
+            remaining_refresh = None
+            for text_box in refresh_region_boxes:
+                count_match = re.search(r"(\d+)\s*/\s*(\d+)", text_box.name)
+                if count_match:
+                    remaining_refresh_box = text_box
+                    remaining_refresh = (
+                        int(count_match.group(1)), int(count_match.group(2))
+                    )
+                    break
+
+            # 费用只能取纯数字文本框：用 re.search(r"\d+") 会先命中 0/3 里的 0，
+            # 把刷新费用误解析成 0，于是灰色按钮也满足"信用点够花"的条件。
+            paid_refresh_box = next(
+                (
+                    text_box for text_box in refresh_region_boxes
+                    if re.fullmatch(r"\d+", text_box.name.strip())
+                ),
+                None,
+            )
+            if remaining_refresh and remaining_refresh[0] <= 0:
+                task.log_info(
+                    f"德朗商店剩余刷新次数为{remaining_refresh[0]}/"
+                    f"{remaining_refresh[1]}，刷新按钮已变灰，不刷新商店"
+                )
+            elif paid_refresh_box:
+                refresh_cost = _parse_discounted_price(
+                    paid_refresh_box.name.strip()
+                )
+                current_credit = _get_current_credit(task)
+                credit_floor = _get_config_value(task, "刷装备刻印信用点下限", 300)
+                try:
+                    credit_floor = int(credit_floor)
+                except (TypeError, ValueError):
+                    credit_floor = 300
+                if (
+                    current_credit > credit_floor
+                    and refresh_cost is not None
+                    and refresh_cost > 0
+                    and current_credit >= refresh_cost
+                ):
+                    task.log_info(
+                        f"德朗商店没有符合要求的装备，刷装备刻印模式下"
+                        f"当前信用点{current_credit}高于下限{credit_floor}，"
+                        f"花费{refresh_cost}信用点刷新商店"
+                    )
+                    task.click_box(remaining_refresh_box or paid_refresh_box)
+                    task.sleep(1)
+                    _clear_shop_engraving_rejected(task)
+                    return True
+                task.log_info(
+                    f"德朗商店没有符合要求的装备，但当前信用点{current_credit}"
+                    f"不满足花费刷新条件（需求下限{credit_floor}，刷新费用"
+                    f"{refresh_cost}），不刷新"
+                )
+
+        # 刻印模式下删卡的优先级最低：找刻印装备 -> 免费/付费刷新 -> 删卡。
+        # 只有货架上没有值得点开的刻印装备、又不能刷新时，才花信用点删卡
+        # （刻印模式下删卡在函数开头已经被跳过，这里才真正执行）。
+        if (
+            defer_remove_card
+            and not _shop_removal_disabled_by_pro_mode(task)
+            and _try_remove_shop_card(task, remove_card_box)
+        ):
+            return True
+
+        # 走到这里说明货架上没有值得点开的商品、刷新用不上（按钮已变灰或
+        # 信用点不够）、删卡也做不了：本次商店已经逛完，必须清掉 shop 标记。
+        # 否则离开商店回到营地页面后，handle_rest 会再一次"检测到德朗商店
+        # 且 node_status['shop']=True"点进商店，形成"进店 -> 离开 -> 再进店"
+        # 的死循环。
+        node_status = getattr(task, "node_status", None)
+        if isinstance(node_status, dict):
+            node_status["shop"] = False
+            task.log_info(
+                "德朗商店已无可执行操作，标记 node_status['shop']=False，"
+                "本次商店流程结束"
+            )
+
     return False
 
 
@@ -4017,6 +5102,7 @@ def _initial_node_status():
             "node_count": 0, "enter_new_node": False, "node_type": "", "is_escaped": False,
             "save_target_member": False, "target_mask_card_position": -1,
             "get_specific_flash": False, "removed_card_count": 0,
+            "shop_removed_card_count": 0,
             "neutral_card_count": 0}
 
 
@@ -4066,6 +5152,7 @@ def reset_all_status(task: TriggerTask):
     task.member_status = _initial_member_status()
     _reset_meditation_state(task)
     task._pending_removed_card_count = 0
+    task._pending_shop_removal = False
 
 
 def reset_mission_status(task: TriggerTask):
@@ -4082,6 +5169,7 @@ def reset_mission_status(task: TriggerTask):
     task.member_status = _initial_member_status()
     _reset_meditation_state(task)
     task._pending_removed_card_count = 0
+    task._pending_shop_removal = False
 
 
 def reset_layer_status(task: TriggerTask):
@@ -4095,6 +5183,7 @@ def reset_layer_status(task: TriggerTask):
                 'target_mask_card_position': ns.get('target_mask_card_position', -1),
                 'get_specific_flash': ns.get('get_specific_flash', False),
                 'removed_card_count': ns.get('removed_card_count', 0),
+                'shop_removed_card_count': ns.get('shop_removed_card_count', 0),
                 'neutral_card_count': ns.get('neutral_card_count', 0)}
         task.node_status = _initial_node_status()
         task.node_status['pass_final_boss_count'] = keep['pass_final_boss_count']
@@ -4104,6 +5193,7 @@ def reset_layer_status(task: TriggerTask):
         task.node_status['target_mask_card_position'] = keep['target_mask_card_position']
         task.node_status['get_specific_flash'] = keep['get_specific_flash']
         task.node_status['removed_card_count'] = keep['removed_card_count']
+        task.node_status['shop_removed_card_count'] = keep['shop_removed_card_count']
         task.node_status['neutral_card_count'] = keep['neutral_card_count']
 
 
